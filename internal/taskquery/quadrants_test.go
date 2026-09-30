@@ -19,7 +19,7 @@ func queriesFrom(t *testing.T, content string) *Queries {
 	return queriesAt(t, content, "2026-07-20T12:00:00Z")
 }
 
-func queriesAt(t *testing.T, content, instant string) *Queries {
+func queriesAt(t *testing.T, content, instant string, options ...Option) *Queries {
 	t.Helper()
 	dir := t.TempDir()
 	org := filepath.Join(dir, "tasks.jsonl")
@@ -38,7 +38,7 @@ func queriesAt(t *testing.T, content, instant string) *Queries {
 	if err != nil {
 		t.Fatalf("context: %v", err)
 	}
-	return New(snapshot, context)
+	return New(snapshot, context, options...)
 }
 
 func quadrantItem(priority string, tags []string, deadline, scheduled string) store.Item {

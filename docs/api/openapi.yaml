@@ -26,7 +26,8 @@ info:
     - Successful responses use the envelope `{ "data": ..., "meta": { ... } }`.
       `meta` reports the store revision the answer was read at, so the few
       operations that read no store omit it: the health probes carry no
-      envelope at all, and `GET /recurrence/explain` carries `data` only.
+      envelope at all, and the taskless previews (`GET /recurrence/explain`,
+      `GET /dates/parse`, `GET /lead/explain`) carry `data` only.
       Errors use `{ "error": { "code", "message", "details", "request_id" } }`.
     - `revision` is an opaque string. Operation descriptions name semantic
       precondition scopes, but component positions and digest recipes are not
@@ -34,8 +35,10 @@ info:
       Clients refetch task resources after reconnecting to a restarted API;
       `store_revision` tracks backing-store bytes, not server-side ETag recipe
       changes, so a pre-upgrade `If-Match` may receive a conservative `412`.
-    - Dates are ISO `YYYY-MM-DD` strings or `null`. Friendly date parsing is a
-      human CLI/TUI feature and is not part of this contract.
+    - Dates are ISO `YYYY-MM-DD` strings or `null`. Writes take ISO only;
+      friendly text (`fri 4pm`, `in 2 weeks`) is read by the taskless
+      `GET /dates/parse` preview, which answers with the ISO date and time
+      object a write accepts.
       Optional companion time objects preserve minute-precision civil time,
       floating/fixed mode, IANA zone, and fold choice. A time does not create a reminder.
     - `scheduled` is the available-from/start/defer-until value; `deadline` is
@@ -63,8 +66,10 @@ tags:
     description: Projects and areas rolled up over their open tasks.
   - name: recurrence
     description: Taskless schedule parsing and projection.
+  - name: parsing
+    description: Taskless previews of friendly date and lead-time input.
   - name: views
-    description: Canonical named selections (agenda, next, quadrants, inbox, projects).
+    description: The TUI's tabs as data — named selections with their groups (agenda, next, quadrants, inbox) and the outline.
   - name: history
     description: Shared undo/redo journal.
   - name: archive
@@ -83,14 +88,57 @@ paths:
       description: |
         Returns the enumerable vocabularies (states, priorities), config-derived
         limits (`max_depth`, `urgent_days`), server mode, and the global
-        `store_revision`. Never returns filesystem paths. Conditional polling of
-        this endpoint is the v1 default for change detection; see `/events`.
+        `store_revision`. Never returns filesystem paths.
+
+        This is the change-detection poll. The `ETag` covers both halves of
+        what the response depends on: the global store revision and a digest
+        of the document itself (this process's configuration — zone, date
+        order, `urgent_days`, link config, delegation modes — its build, and
+        its capabilities). A request whose `If-None-Match` names it (weak
+        comparison, so `W/"…"` matches; a comma-separated list matches when
+        any member does) is answered `304 Not Modified` with no body. The 304
+        is decided from a digest of the two files alone — no parse, no
+        validation, no snapshot — so polling once a second is cheap.
+        `If-None-Match: *` is honoured only after a successful full read. The
+        response carries `Cache-Control: no-cache` (every other route is
+        `no-store`), so a browser `fetch()` revalidates automatically. Clients
+        that can hold a connection open may prefer `/events` when
+        `capabilities.events` is true.
+
+        Treat this ETag as opaque: send back exactly a value this endpoint
+        returned. It is not the bare store revision, so do not construct it
+        from `meta.store_revision` or from an `/events` frame — such a tag
+        never matches and is answered `200`. Because the configuration is part
+        of the tag, restarting the API with different settings answers the old
+        tag `200` even when the store bytes are unchanged.
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          description: An ETag previously returned by this endpoint, sent back verbatim.
+          schema: { type: string }
+          example: '"s1.6f2a9c0b.3e1f0a9c2b7d"'
       responses:
+        "304":
+          description: |
+            Neither the store nor the document has changed since the supplied
+            ETag. No body. Carries the current `ETag` and
+            `Cache-Control: no-cache`.
+          headers:
+            ETag:
+              description: The current /meta entity tag (unchanged). Opaque.
+              schema: { type: string }
         "200":
           description: Capabilities and current store revision.
           headers:
             ETag:
-              description: Current global store revision, also present in `meta.store_revision`.
+              description: |
+                Opaque /meta entity tag over the store revision and the
+                document. `meta.store_revision` is the plain store revision;
+                the tag is not, and is not derivable from it.
+              schema: { type: string }
+            Cache-Control:
+              description: "`no-cache`: store, but revalidate with If-None-Match before every use."
               schema: { type: string }
           content:
             application/json:
@@ -120,12 +168,23 @@ paths:
                       time_format: 12
                       tzdb_version: "zoneinfo"
                       temporal_precision: "minute"
+                      date_order: "mdy"
+                      link_shorthands:
+                        jira: "https://jira.example.com/browse/%s"
+                      link_systems:
+                        forge: "git.example.com"
                       capabilities:
                         projects: true
-                        undo: false
-                        redo: false
-                        archive_sweep: false
-                        events: false
+                        undo: true
+                        redo: true
+                        archive_sweep: true
+                        events: true
+                        views: true
+                        activate: true
+                        patch_deltas: true
+                        date_parse: true
+                        lead_explain: true
+                        outline: true
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "503":
@@ -142,7 +201,10 @@ paths:
       summary: Ordered live sections for capture and placement.
       description: |
         Live section records in display order. Sections carry the same checked
-        eight-hex ids as tasks. Archive sections are not returned.
+        eight-hex ids as tasks. Archive sections are not returned. Each
+        section carries its role (`kind`), its body note, and its lifecycle
+        pair, so a client can label the Inbox, the Projects heading, projects,
+        areas, saved lists and nested sub-sections without matching titles.
       responses:
         "200":
           description: Ordered sections.
@@ -163,9 +225,17 @@ paths:
                       - id: "1a2b3c4d"
                         title: "Inbox"
                         parent_id: null
+                        kind: "inbox"
+                        body: null
+                        state: null
+                        closed: null
                       - id: "9f8e7d6c"
                         title: "Work"
                         parent_id: null
+                        kind: "area"
+                        body: "Day job."
+                        state: null
+                        closed: null
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "503":
@@ -354,6 +424,7 @@ paths:
                         availability_reason: "available"
                         availability_blocker_id: null
                         available_at: null
+                        quadrant: "Q2"
                         recurrence: null
                         recurrence_human: null
                         lead: null
@@ -361,9 +432,12 @@ paths:
                         lead_opens: null
                         lead_opens_at: null
                         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                        created: "2026-07-14"
+                        updated: "2026-07-20T16:04:11Z"
                         closed: null
                         rejected: null
                         archived: false
+                        archived_on: null
                         project: "Work"
                         child_count: 0
                         descendant_count: 0
@@ -374,6 +448,7 @@ paths:
                             url: "https://github.com/acme/app/issues/12"
                             label: "acme/app#12"
                             source: "body"
+                        agent_ready: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "400":
@@ -469,6 +544,7 @@ paths:
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -476,15 +552,19 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: ["Captured 2026-07-14."]
+                      created: "2026-07-14"
+                      updated: "2026-07-14T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
                       delegation: null
                       formal_links: []
                       links: []
+                      agent_ready: false
                     meta:
                       store_revision: "s1.7a1b2c3d"
         "400":
@@ -584,6 +664,7 @@ paths:
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -591,9 +672,12 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
@@ -604,6 +688,7 @@ paths:
                           url: "https://github.com/acme/app/issues/12"
                           label: "acme/app#12"
                           source: "body"
+                      agent_ready: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "404":
@@ -631,6 +716,36 @@ paths:
         `If-Match` is required. A semantically no-op change is a success: it
         returns `200` with the unchanged resource and its current `ETag`, and
         it does not burn an undo step.
+
+        **Deltas.** `add_tags`, `remove_tags`, `add_contexts`, and
+        `remove_contexts` are the CLI's `tasks tag <ref> +foo -bar @ctx -@old`:
+        one `tag_delta` applied to the stored tag sequence. `append_body` is
+        `tasks note`: the text (or lines, joined with newlines) becomes the
+        body's last line, composed under the store lock. A tag delta rewrites
+        the whole ordered tag sequence, so it cannot be combined with `tags`,
+        `contexts`, or `deferred`; `append_body` cannot be combined with
+        `body`; a value may not be both added and removed. Each is a `422`.
+
+        **Delta preconditions.** A real revision in `If-Match` keeps its
+        ordinary meaning on a delta — the task's content must be unchanged. A
+        PATCH whose members are all deltas may instead send `If-Match: *`: a
+        delta does not depend on the value it lands on, so the store applies it
+        to whatever it holds and it lands beside a concurrent edit of another
+        field rather than failing `412` and retrying. `*` on a PATCH that
+        carries any replacement member is `428`.
+
+        **Clearing dates.** A request that only clears dates (`scheduled` and/or
+        `deadline` null, setting neither) runs the store's single date-clear
+        operation — `tasks undate` — for the dates the task carries, retiring a
+        recurrence or lead whose last anchor went. Nulling a date the task does
+        not carry stays a no-op.
+
+        **Effects.** `meta.effects` reports what the write changed beyond the
+        returned task: `rolled` when `state: DONE` rolled a recurring task
+        forward instead of closing it, and `touched_ids` when the write changed
+        any task other than the returned one — a completion that cascaded DONE
+        over open descendants, or a move (`parent_id`/`placement`) that carried
+        descendants with it. It is omitted when there is nothing to report.
 
         Any live task may be patched, including a `PROPOSED` task. Presentation
         fields such as title, priority, body, tags, and contexts can therefore
@@ -697,11 +812,23 @@ paths:
                 summary: Lifecycle transition.
                 value:
                   state: "DONE"
+              tag_delta:
+                summary: Add and remove tags and contexts without sending the whole list.
+                value:
+                  add_tags: ["travel"]
+                  remove_tags: ["urgent"]
+                  add_contexts: ["@phone"]
+                  remove_contexts: ["@computer"]
+              append_note:
+                summary: "Append a note line; may be sent with `If-Match: *`."
+                value:
+                  append_body: "Called the vendor; waiting on a quote."
       responses:
         "200":
           description: |
             Updated resource, or — for a semantic no-op — the unchanged resource
-            with its current ETag.
+            with its current ETag. `meta.effects` is present when the write
+            rolled a recurring task or cascaded to other tasks.
           headers:
             ETag:
               description: New opaque revision after the change (unchanged on a no-op).
@@ -738,6 +865,7 @@ paths:
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -745,17 +873,119 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
                       delegation: null
                       formal_links: []
                       links: []
+                      agent_ready: false
                     meta:
                       store_revision: "s1.8b2c3d4e"
+                completed_parent_meta:
+                  summary: "`state: DONE` on a parent with open descendants: `touched_ids` names the parent and every descendant it closed."
+                  value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.new-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6c"
+                      depth: 0
+                      state: "DONE"
+                      priority: "A"
+                      title: "Renew the vendor contract"
+                      contexts: ["@desk"]
+                      tags: ["billing"]
+                      deferred: false
+                      scheduled: null
+                      scheduled_time: null
+                      deadline: null
+                      deadline_time: null
+                      available: false
+                      availability_reason: "closed"
+                      availability_blocker_id: null
+                      available_at: null
+                      quadrant: null
+                      recurrence: null
+                      recurrence_human: null
+                      lead: null
+                      lead_human: null
+                      lead_opens: null
+                      lead_opens_at: null
+                      body: ["Captured 2026-07-14."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
+                      closed: "2026-07-20"
+                      rejected: null
+                      archived: false
+                      archived_on: null
+                      project: "Work"
+                      child_count: 2
+                      descendant_count: 2
+                      formal_links: []
+                      links: []
+                      delegation: null
+                      agent_ready: false
+                    meta:
+                      store_revision: "s1.9c3d4e5f"
+                      effects:
+                        touched_ids: ["3c4d5e6f", "4d5e6f7a", "5e6f7a8b"]
+                rolled_recurring_meta:
+                  summary: "`state: DONE` on a weekly task: it rolls forward and stays open, and `rolled` says so."
+                  value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.new-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6d"
+                      depth: 0
+                      state: "NEXT"
+                      priority: null
+                      title: "Water the plants"
+                      contexts: ["@home"]
+                      tags: []
+                      deferred: false
+                      scheduled: null
+                      scheduled_time: null
+                      deadline: "2026-10-08"
+                      deadline_time: null
+                      available: true
+                      availability_reason: "available"
+                      availability_blocker_id: null
+                      available_at: null
+                      quadrant: "Q4"
+                      recurrence: "+1w"
+                      recurrence_human: "every week from the scheduled date"
+                      lead: null
+                      lead_human: null
+                      lead_opens: null
+                      lead_opens_at: null
+                      body: ["Captured 2026-07-14."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
+                      closed: null
+                      rejected: null
+                      archived: false
+                      archived_on: null
+                      project: null
+                      child_count: 0
+                      descendant_count: 0
+                      formal_links: []
+                      links: []
+                      delegation: null
+                      agent_ready: false
+                    meta:
+                      store_revision: "s1.0d4e5f6a"
+                      effects:
+                        rolled: { from: "2026-10-01", to: "2026-10-08" }
         "400":
           $ref: "#/components/responses/MalformedRequest"
         "404":
@@ -835,11 +1065,22 @@ paths:
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "422":
-          description: Malformed fields, unknown placement members, or mutually exclusive location inputs.
+          description: |
+            Malformed fields, unknown placement members, mutually exclusive
+            location inputs, or a delta combined with the field it edits.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
               examples:
+                delta_with_replacement:
+                  value:
+                    error:
+                      code: "validation_failed"
+                      message: "One or more fields are invalid."
+                      details:
+                        fields:
+                          add_tags: ["cannot be combined with tags"]
+                      request_id: "req_6a2c"
                 conflicting_location_inputs:
                   value:
                     error:
@@ -860,7 +1101,27 @@ paths:
                           placement: ["must contain only parent_id and before_id"]
                       request_id: "req_6a2b"
         "428":
-          $ref: "#/components/responses/MissingPrecondition"
+          description: |
+            `If-Match` was absent, or was `*` on a PATCH that carries a
+            replacement member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                missing:
+                  value:
+                    error:
+                      code: "missing_precondition"
+                      message: "This write requires an If-Match header."
+                      details: {}
+                      request_id: "req_5e6f"
+                wildcard_on_replacement:
+                  value:
+                    error:
+                      code: "missing_precondition"
+                      message: "If-Match: * is accepted only on a PATCH whose members are all deltas (add_tags, remove_tags, add_contexts, remove_contexts, append_body); send the task's revision."
+                      details: {}
+                      request_id: "req_5e70"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     delete:
@@ -877,6 +1138,12 @@ paths:
         namespace. `If-Match` is required and is checked against all three
         revision components so a changed descendant, sibling, or the task itself
         refuses a stale cascade.
+
+        A plain delete answers `204`. `cascade=true` answers `200` with
+        `{deleted: [...]}`: every task the write removed, root first then its
+        subtree in file order, each as it stood immediately before the delete —
+        the shape `tasks delete --json` reports. The status follows the
+        request, so `cascade=true` on a leaf is a `200` listing that one task.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
         - name: cascade
@@ -885,8 +1152,26 @@ paths:
           required: false
           schema: { type: boolean, default: false }
       responses:
+        "200":
+          description: With `cascade=true`, the deleted subtree.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [deleted]
+                    additionalProperties: false
+                    properties:
+                      deleted:
+                        type: array
+                        description: Removed tasks, root first, as they stood before the delete.
+                        items: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
         "204":
-          description: Task (and, with cascade, its subtree) deleted.
+          description: Task deleted (no `cascade`).
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -948,7 +1233,8 @@ paths:
         the same write, one journal entry, so `undo` restores PROPOSED exactly.
         It is the answer for a proposal whose work is already done; rejecting
         would record a decline instead. The completion cascades to accepted open
-        descendants. Equivalent to the CLI's `approve --done`.
+        descendants, which `meta.effects.touched_ids` reports. Equivalent to the
+        CLI's `approve --done`.
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/IfMatch"
@@ -1076,6 +1362,51 @@ paths:
         "428": { $ref: "#/components/responses/MissingPrecondition" }
         "503": { $ref: "#/components/responses/StoreInvalid" }
 
+  /tasks/{id}/activate:
+    post:
+      tags: [tasks]
+      operationId: activateTask
+      summary: Make a task available now.
+      description: |
+        The HTTP mirror of `tasks activate` (the TUI's `z` → `now`), running
+        the same application operation in one write and one undo step. The
+        task's own indefinite hold is released and a FUTURE available-from date
+        is cleared; a past or present one stays, because it is history rather
+        than a gate. A task with a lead window keeps every date and records a
+        one-occurrence release instead, so the window re-arms against the next
+        anchor. None of that can be composed from `PATCH`:
+        `{deferred: false, scheduled: null}` drops a past start date and
+        releases nothing on a lead task.
+
+        Takes no body and no query parameters. `If-Match` is mandatory and is
+        compared against the task's content, as on `PATCH`. Any live task may
+        be activated by id; an already-available task is a no-op `200`.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The activated task resource.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
   /tasks/{id}/delegate:
     post:
       tags: [tasks]
@@ -1181,6 +1512,7 @@ paths:
                       availability_reason: "available"
                       availability_blocker_id: null
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -1188,9 +1520,12 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: []
+                      created: null
+                      updated: "2026-07-20T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
@@ -1201,6 +1536,7 @@ paths:
                         mode: "research"
                         status: "ready"
                         at: "2026-07-27T18:02:00Z"
+                      agent_ready: true
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "400": { $ref: "#/components/responses/MalformedRequest" }
@@ -1690,6 +2026,9 @@ paths:
         Returns a single project or area by its section id. An id that is not a
         project or area (a task, Inbox, the Projects heading, a nested
         sub-section, or an area with no open work today) is `404`.
+        This read keeps the listing's vocabulary; the section actions below are
+        wider, and `GET /views/outline` carries every section with its role and
+        lifecycle.
       responses:
         "200":
           description: The project resource.
@@ -1721,6 +2060,8 @@ paths:
                       stuck: false
                       held_count: 1
                       body: "Goal: ship the personal site."
+                      state: null
+                      closed: null
                       task_ids: ["cccc0005", "cccc0006", "cccc0008"]
                     meta:
                       store_revision: "s1.6f2a9c0b"
@@ -1733,12 +2074,15 @@ paths:
     patch:
       tags: [projects]
       operationId: renameProject
-      summary: Rename a project or area section.
+      summary: Rename a project, area, or any other section the outline shows.
       description: |
         Replaces the section title (leading/trailing whitespace trimmed). A
-        blank or missing `title` is `422`; an id that is not a project or area
-        (a task, Inbox, the "Projects" heading, a done-pile section) is `404`
-        before any write. A rename that moves an area out of scope (e.g.
+        blank or missing `title` is `422`. Like every section action, it takes
+        any live section id the outline shows — a nested sub-section, a saved
+        list, an area with no open work — not only what `/projects` lists; an
+        id that is not a live section (a task, an unknown id) is `404`, and the
+        Inbox and the "Projects" heading are `409` (see SectionActionRefused),
+        both before any write. A rename that moves an area out of scope (e.g.
         retitled "Inbox") still returns its `200` post-state, never a `404`
         after the write committed. Unlike task writes, project mutations carry
         no per-resource revision, so no `If-Match` precondition is required;
@@ -1785,9 +2129,13 @@ paths:
                       stuck: true
                       held_count: 0
                       body: null
+                      state: null
+                      closed: null
                       task_ids: ["cccc000b"]
                     meta:
                       store_revision: "s2.1a2b3c4d"
+        "409":
+          $ref: "#/components/responses/SectionActionRefused"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -1818,10 +2166,10 @@ paths:
         write as the tasks. Returns the project resource with its refreshed
         counts (`open_count` now 0); a completed area that no longer surfaces in
         the read model still returns its `200` post-state, never a `404` after
-        the write committed. An id that is not a project or area (a task, Inbox,
-        the "Projects" heading, a done-pile section) is `404` before any write.
-        The request takes no body. No `If-Match` precondition (see the rename
-        note).
+        the write committed. Any live section the outline shows is accepted (see
+        the rename note); a task or unknown id is `404` and the Inbox or the
+        "Projects" heading `409`, before any write. The request takes no body.
+        No `If-Match` precondition (see the rename note).
       responses:
         "200":
           description: The project resource after completion (open_count now 0).
@@ -1858,6 +2206,8 @@ paths:
                       task_ids: []
                     meta:
                       store_revision: "s2.1a2b3c4d"
+        "409":
+          $ref: "#/components/responses/SectionActionRefused"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -1880,9 +2230,11 @@ paths:
         with `409 conflict` while the project still has open work unless
         `force=true` — deferred/held tasks (`held_count`) count as open work
         too, so a parked-but-open project also refuses. The request takes no
-        body. No `If-Match` precondition (see the rename note). The project
-        resource is gone after this succeeds, so the response is a small archive
-        summary rather than a project.
+        body. No `If-Match` precondition (see the rename note). Any live section
+        the outline shows is accepted; a task or unknown id is `404`, and the
+        Inbox or the "Projects" heading is a `409` whatever `force` says. The
+        project resource is gone after this succeeds, so the response is a
+        small archive summary rather than a project.
       parameters:
         - name: force
           in: query
@@ -1914,11 +2266,22 @@ paths:
                     meta:
                       store_revision: "s2.1a2b3c4d"
         "409":
-          description: The project has open work without `force`.
+          description: |
+            The project has open work without `force`, or the section is the
+            Inbox or the "Projects" heading (see SectionActionRefused).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
               examples:
+                structural_section:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The Projects heading holds every project; it cannot be renamed, closed, or archived."
+                      details:
+                        id: "cccc0003"
+                        kind: "projects_root"
+                      request_id: "req_5e70"
                 open_tasks:
                   value:
                     error:
@@ -1951,7 +2314,9 @@ paths:
         `closed` date, `defer` dropped, and a recurring descendant retired. The
         section itself is stamped CANCELLED with today's `closed` date, in the
         same write as the tasks. Returns the project resource with its refreshed
-        counts. No `If-Match` precondition.
+        counts. Any live section the outline shows is accepted (see the rename
+        note); a task or unknown id is `404` and the Inbox or the "Projects"
+        heading `409`, before any write. No `If-Match` precondition.
       responses:
         "200":
           description: The project resource after dropping (open_count now 0).
@@ -1988,6 +2353,8 @@ paths:
                       task_ids: []
                     meta:
                       store_revision: "s2.1a2b3c4d"
+        "409":
+          $ref: "#/components/responses/SectionActionRefused"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -2006,7 +2373,9 @@ paths:
       summary: Reopen a closed project.
       description: |
         Clears `state` and `closed` from the section, leaving its tasks untouched.
-        No `If-Match` precondition.
+        Any live section the outline shows is accepted, the Inbox and the
+        "Projects" heading included — reopen is the way back if one was closed
+        anyway. No `If-Match` precondition.
       responses:
         "200":
           description: The reopened project resource.
@@ -2067,9 +2436,11 @@ paths:
 
         Accepts both input syntaxes (see `CreateTaskRequest.recurrence`) and
         returns the canonical spelling that a write would store. Occurrences are
-        projected from today in the server's configured time zone; the stamp on
-        a task is itself the next occurrence, so this endpoint is the only place
-        that projects further ahead.
+        projected from today in the server's configured time zone, or from
+        `anchor` when one is given; the stamp on a task is itself the next
+        occurrence, so passing a task's `deadline` (else `scheduled`) as
+        `anchor` answers "when does this task fire after that", the HTTP twin
+        of `tasks recur <ref>`.
 
         Three response shapes, all `200`, because "this is not a schedule" is an
         answer rather than a request error:
@@ -2104,6 +2475,17 @@ paths:
             are clamped to that range rather than rejected (the engine clamps
             identically); a value that is not an integer is `422`.
           schema: { type: integer, default: 5 }
+        - name: anchor
+          in: query
+          required: false
+          description: |
+            The stamp to project from instead of today — typically the task's
+            `deadline`, else its `scheduled` date. `next` then lists the
+            occurrences after it (the stamp itself is not repeated). A
+            from-completion interval (`.+1w`) measures from today whatever the
+            stamp, exactly as completing the task would. Anything but a real
+            `YYYY-MM-DD` date is `422`.
+          schema: { type: string, format: date }
       responses:
         "200":
           description: The parsed schedule, or the reason the input was not one.
@@ -2152,27 +2534,205 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationFailed"
 
+  /dates/parse:
+    get:
+      tags: [parsing]
+      operationId: parseDate
+      summary: Read friendly date text without touching a task.
+      description: |
+        The preview a browser date field needs: what `input` means as a date,
+        read by the same parser the TUI's date fields use — a friendly date
+        (`fri`, `next friday`, `in 2 weeks`, `aug 1`, `10/2`, ISO), an optional
+        wall time (`4pm`, `09:30`, `noon`), then an optional zone word (an IANA
+        id, `UTC` in any case, or `floating`) and an optional `fold=earlier` /
+        `fold=later`. Relative input is measured from now in the server's
+        configured time zone, and an ambiguous numeric date follows
+        `Meta.date_order`. The CLI twin is `tasks due --explain "<text>"`.
+
+        A client shows `human` under the field, then writes `date` as
+        `deadline` / `scheduled` and `time` as `deadline_time` /
+        `scheduled_time` unchanged.
+
+        Two response shapes, both `200`, because "this is not a date" is an
+        answer rather than a request error: a parsed value (`date`, `time`,
+        `human`), or `error` with the reason. Like `/recurrence/explain`, no
+        store is read, so the envelope carries `data` only.
+      parameters:
+        - name: input
+          in: query
+          required: true
+          description: The text to read. Required and non-blank; otherwise `422`.
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: The parsed value, or the reason the input is not a date.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data: { $ref: "#/components/schemas/DateParse" }
+              examples:
+                timed:
+                  summary: A floating wall time.
+                  value:
+                    data:
+                      input: "fri 4pm"
+                      date: "2026-10-02"
+                      time: { local: "16:00", timezone: null, fold: 0 }
+                      human: "Fri 2 Oct, 4:00p"
+                all_day:
+                  summary: A calendar day.
+                  value:
+                    data:
+                      input: "in 2 weeks"
+                      date: "2026-10-14"
+                      time: null
+                      human: "Wed 14 Oct"
+                unparsable:
+                  summary: Not a date.
+                  value:
+                    data:
+                      input: "blursday"
+                      error: "unrecognized date: blursday"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /lead/explain:
+    get:
+      tags: [parsing]
+      operationId: explainLead
+      summary: Preview a lead-time span without touching a task.
+      description: |
+        What `input` would store as a task's `lead`, how `lead_human` renders
+        it, and — given the task's anchor date — the date its window opens,
+        which a write would report as `lead_opens`. Accepts the same input
+        `tasks lead` does (`3w`, `3 weeks`, `a fortnight`, `5h`, `off`). The
+        CLI twin is `tasks lead --explain "<span>" [--anchor <date>]`.
+
+        Three shapes, all `200`: a span (`canonical`, `human`, `opens`); a
+        clearing word (`canonical: null`, `human: "no lead time"`); or
+        unreadable input (`error` only). No store is read, so the envelope
+        carries `data` only.
+      parameters:
+        - name: input
+          in: query
+          required: true
+          description: The span to read. Required and non-blank; otherwise `422`.
+          schema: { type: string, minLength: 1 }
+        - name: anchor
+          in: query
+          required: false
+          description: |
+            The task's anchor — its `deadline`, else its `scheduled` date. With
+            it, a calendar span reports `opens`; anything but a real
+            `YYYY-MM-DD` date is `422`.
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The parsed span, or the reason the input is not one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data: { $ref: "#/components/schemas/LeadExplanation" }
+              examples:
+                anchored:
+                  value:
+                    data:
+                      input: "3 weeks"
+                      canonical: "3w"
+                      human: "3 weeks"
+                      opens: "2026-10-11"
+                cleared:
+                  value:
+                    data:
+                      input: "off"
+                      canonical: null
+                      human: "no lead time"
+                      opens: null
+                unparsable:
+                  value:
+                    data:
+                      input: "soonish"
+                      error: 'unrecognized lead time: "soonish"'
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
   /views/{name}:
     parameters:
       - name: name
         in: path
         required: true
-        description: Canonical named selection.
+        description: |
+          Named selection. `projects` is not one — `GET /projects` owns it — and
+          the outline has its own shape at `GET /views/outline`. Any other name
+          is `404` with the routed names in `details.views`.
         schema:
           type: string
-          enum: [agenda, next, quadrants, inbox, projects]
+          enum: [agenda, next, quadrants, inbox]
     get:
       tags: [views]
       operationId: getView
-      summary: A canonical named selection with grouping metadata.
+      summary: A TUI tab as data — its rows in canonical order and its groups.
       description: |
-        Returns the same task selection and ordering as the CLI/TUI named views
-        so their semantics are not reimplemented in the browser. `quadrants`
-        adds a `quadrant` label per item; `projects` groups by nearest open
-        project.
+        Returns the selection, order and grouping the TUI tab of the same name
+        paints, computed by the same shared code, so a client does not
+        reimplement view semantics. Dates are measured against the server's
+        `today` in the server's zone.
+
+        `tasks` is every row the view admits, each once, as full Task
+        resources in the view's canonical order — the order `tasks <view>
+        --json` prints, except that `inbox` also leads with the approvals block
+        the CLI's `tasks inbox` does not list. `groups` is the layout: ordered buckets that reference
+        those rows by id, so a row can sit in several groups (a task with two
+        contexts in `next`) without being repeated.
+
+        - `agenda`: open tasks with a deadline or available-from date, soonest
+          boundary first, priority breaking ties. Always four groups:
+          `overdue`, `today`, `tomorrow`, `later`, by the row's deadline (else
+          its available-from date, which is never overdue — a past start date
+          files under `today`).
+        - `next`: NEXT actions by priority. One group per `@context`, in key
+          order, with context-less rows under `(no context)`.
+        - `quadrants`: open tasks in file order. Always four groups `Q1`..`Q4`
+          with their headings as `label`, empty ones included; the
+          classification uses the server's `urgent_days`.
+        - `inbox`: the intake tab's two blocks. First `approvals` — every
+          PROPOSED task in the shared triage order (priority, then soonest
+          date) — then `inbox`, the accepted INBOX captures in file order.
+          `tasks` lists the approvals first. Each block groups by enclosing
+          project section in the Projects view's order, with the unfiled bucket
+          (`Inbox`) last; a group's `block` names which block it belongs to.
+
+        Every view except the approvals block admits only rows available now;
+        `include_unavailable=true` is the TUI's `Z` toggle and admits held,
+        deferred and not-yet-startable rows too. The TUI's tree mode (a
+        matching task's non-matching children riding under it) and its empty
+        states are presentation; `parent_id` on each Task is enough to nest
+        rows the same way.
+      parameters:
+        - name: include_unavailable
+          in: query
+          required: false
+          description: Admit rows that are not available now (the TUI's Z toggle). Default false.
+          schema: { type: boolean, default: false }
       responses:
         "200":
-          description: The named selection.
+          description: The named selection and its groups.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -2181,24 +2741,29 @@ paths:
                 properties:
                   data:
                     type: object
-                    required: [name, tasks]
+                    required: [name, today, include_unavailable, tasks, groups]
+                    additionalProperties: false
                     properties:
-                      name: { type: string }
+                      name:
+                        type: string
+                        enum: [agenda, next, quadrants, inbox]
+                      today:
+                        $ref: "#/components/schemas/IsoDateOnly"
+                      include_unavailable: { type: boolean }
                       tasks:
                         type: array
                         items: { $ref: "#/components/schemas/Task" }
                       groups:
-                        description: Optional grouping metadata (view-specific).
                         type: array
-                        items:
-                          type: object
-                          additionalProperties: true
+                        items: { $ref: "#/components/schemas/ViewGroup" }
                   meta: { $ref: "#/components/schemas/ResponseMeta" }
               examples:
                 agenda:
                   value:
                     data:
                       name: "agenda"
+                      today: "2026-07-20"
+                      include_unavailable: false
                       tasks:
                         - id: "3c4d5e6f"
                           revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
@@ -2220,6 +2785,7 @@ paths:
                           availability_reason: "available"
                           availability_blocker_id: null
                           available_at: null
+                          quadrant: "Q1"
                           recurrence: null
                           recurrence_human: null
                           lead: null
@@ -2227,19 +2793,250 @@ paths:
                           lead_opens: null
                           lead_opens_at: null
                           body: ["Captured 2026-07-14."]
+                          created: "2026-07-14"
+                          updated: "2026-07-20T16:04:11Z"
                           closed: null
                           rejected: null
                           archived: false
+                          archived_on: null
                           project: "Work"
                           child_count: 0
                           descendant_count: 0
                           delegation: null
                           formal_links: []
                           links: []
+                          agent_ready: false
+                      groups:
+                        - { block: null, key: "overdue", label: "Overdue", task_ids: [] }
+                        - { block: null, key: "today", label: "Today", task_ids: ["3c4d5e6f"] }
+                        - { block: null, key: "tomorrow", label: "Tomorrow", task_ids: [] }
+                        - { block: null, key: "later", label: "Later", task_ids: [] }
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/ViewNotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /views/outline:
+    get:
+      tags: [views]
+      operationId: getOutline
+      summary: The Outline tab as data — the live tree, sections and tasks interleaved in file order.
+      description: |
+        One flat DFS pre-order list of nodes, sections and tasks interleaved
+        exactly as the file holds them — the relative order of a section's
+        child tasks and child sub-sections that `/tasks` and `/sections`
+        cannot express between them. Section nodes carry the Section resource
+        plus task tallies; task nodes carry the full Task resource.
+
+        The rules are the Outline tab's, from the same shared code: PROPOSED
+        tasks never appear (the inbox view's approvals block owns undecided
+        work), and closed tasks and closed sections appear only with
+        `include_closed=true` (the TUI's `C` toggle). A hidden row is
+        transparent — its open children carry on one level up — so an open
+        task under a completed parent stays visible. Availability is not a
+        filter here: the outline is the whole tree.
+
+        Fold state and the urgency sub-bands the TUI draws inside a section
+        whose children are all tasks are presentation and are not applied; the
+        order is always the file's.
+      parameters:
+        - name: include_closed
+          in: query
+          required: false
+          description: Show DONE and CANCELLED tasks and closed sections. Default false.
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The outline.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [name, today, include_closed, nodes]
+                    additionalProperties: false
+                    properties:
+                      name: { type: string, enum: [outline] }
+                      today:
+                        $ref: "#/components/schemas/IsoDateOnly"
+                      include_closed: { type: boolean }
+                      nodes:
+                        type: array
+                        items: { $ref: "#/components/schemas/OutlineNode" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  summary: A project with a task and a nested sub-section.
+                  value:
+                    data:
+                      name: "outline"
+                      today: "2026-07-20"
+                      include_closed: false
+                      nodes:
+                        - kind: "section"
+                          id: "cccc0003"
+                          parent_id: null
+                          depth: 0
+                          section:
+                            id: "cccc0003"
+                            title: "Projects"
+                            parent_id: null
+                            kind: "projects_root"
+                            body: null
+                            state: null
+                            closed: null
+                            task_count: 2
+                            open_task_count: 2
+                            closed_task_count: 1
+                            hidden_closed_count: 1
+                          task: null
+                        - kind: "section"
+                          id: "cccc0004"
+                          parent_id: "cccc0003"
+                          depth: 1
+                          section:
+                            id: "cccc0004"
+                            title: "Site launch"
+                            parent_id: "cccc0003"
+                            kind: "project"
+                            body: "Goal: ship the personal site."
+                            state: null
+                            closed: null
+                            task_count: 2
+                            open_task_count: 2
+                            closed_task_count: 1
+                            hidden_closed_count: 1
+                          task: null
+                        - kind: "task"
+                          id: "cccc0005"
+                          parent_id: "cccc0004"
+                          depth: 2
+                          section: null
+                          task:
+                            id: "cccc0005"
+                            revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                            source: "live"
+                            parent_id: null
+                            section_id: "cccc0004"
+                            depth: 0
+                            state: "NEXT"
+                            priority: "B"
+                            title: "Pick a static-site generator"
+                            contexts: ["@computer"]
+                            tags: []
+                            deferred: false
+                            scheduled: null
+                            scheduled_time: null
+                            deadline: null
+                            deadline_time: null
+                            available: true
+                            availability_reason: "available"
+                            availability_blocker_id: null
+                            available_at: null
+                            quadrant: "Q2"
+                            recurrence: null
+                            recurrence_human: null
+                            lead: null
+                            lead_human: null
+                            lead_opens: null
+                            lead_opens_at: null
+                            body: ["Captured 2026-07-10."]
+                            created: "2026-07-10"
+                            updated: "2026-07-10T15:30:00Z"
+                            closed: null
+                            rejected: null
+                            archived: false
+                            archived_on: null
+                            project: "Site launch"
+                            child_count: 0
+                            descendant_count: 0
+                            formal_links: []
+                            links: []
+                            delegation: null
+                            agent_ready: false
+                        - kind: "section"
+                          id: "cccc0007"
+                          parent_id: "cccc0004"
+                          depth: 2
+                          section:
+                            id: "cccc0007"
+                            title: "Copywriting"
+                            parent_id: "cccc0004"
+                            kind: "subsection"
+                            body: null
+                            state: null
+                            closed: null
+                            task_count: 1
+                            open_task_count: 1
+                            closed_task_count: 0
+                            hidden_closed_count: 0
+                          task: null
+                        - kind: "task"
+                          id: "cccc0008"
+                          parent_id: "cccc0007"
+                          depth: 3
+                          section: null
+                          task:
+                            id: "cccc0008"
+                            revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                            source: "live"
+                            parent_id: null
+                            section_id: "cccc0007"
+                            depth: 0
+                            state: "TODO"
+                            priority: null
+                            title: "Draft the about page"
+                            contexts: ["@computer"]
+                            tags: []
+                            deferred: false
+                            scheduled: null
+                            scheduled_time: null
+                            deadline: null
+                            deadline_time: null
+                            available: true
+                            availability_reason: "available"
+                            availability_blocker_id: null
+                            available_at: null
+                            quadrant: "Q4"
+                            recurrence: null
+                            recurrence_human: null
+                            lead: null
+                            lead_human: null
+                            lead_opens: null
+                            lead_opens_at: null
+                            body: ["Captured 2026-07-10."]
+                            created: "2026-07-10"
+                            updated: "2026-07-10T15:30:00Z"
+                            closed: null
+                            rejected: null
+                            archived: false
+                            archived_on: null
+                            project: "Site launch"
+                            child_count: 0
+                            descendant_count: 0
+                            formal_links: []
+                            links: []
+                            delegation: null
+                            agent_ready: false
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2252,7 +3049,13 @@ paths:
         Non-mutating. Returns the next undo and redo labels (or null when a
         direction is empty) plus the `store_revision` they apply to, so the
         client can render labeled controls and supply the right precondition to
-        undo/redo.
+        undo/redo. The labels are the shared journal's plan: when the files
+        were edited outside the journal after its tip, a label is still
+        returned and the step itself refuses with `journal_conflict`.
+
+        Does not require a structurally valid store (an undo is one way back
+        from a bad write); an unsupported schema version is refused. Same
+        document as `tasks history --json`.
       responses:
         "200":
           description: Undo/redo peek.
@@ -2285,6 +3088,8 @@ paths:
                       store_revision: "s1.6f2a9c0b"
                     meta:
                       store_revision: "s1.6f2a9c0b"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2296,7 +3101,10 @@ paths:
       description: |
         Reverts the shared journal's next undo step. The request must carry the
         `store_revision` the client last saw; a mismatch returns `409` instead
-        of undoing another surface's newer write.
+        of undoing another surface's newer write. The precondition is checked
+        under the store lock, after the schema gate and before the journal is
+        consulted, so a stale caller is told it is stale even when there is
+        nothing to undo. CLI equivalent: `tasks undo --store-revision REV --json`.
       requestBody:
         required: true
         content:
@@ -2371,9 +3179,15 @@ paths:
       operationId: archivePreview
       summary: Preview the next archive sweep.
       description: |
-        Returns the safe sweep preview (roots, descendant counts, blocked
-        roots) and an opaque `fingerprint`. A subsequent sweep must present the
-        same fingerprint.
+        Returns what the next sweep would move — closed roots, their
+        descendants, every moved record id — plus the closed roots it would
+        refuse because they still contain open work (each with its open
+        children, which is what the TUI's "Archive blocked" modal lists), and
+        an opaque `fingerprint`. A subsequent sweep must present the same
+        fingerprint. The fingerprint covers the moved records, their content,
+        and the day stamp they would carry, so a preview taken before local
+        midnight does not authorize a sweep after it. Same document as
+        `tasks archive --dry-run --json`.
       responses:
         "200":
           description: Sweep preview and fingerprint.
@@ -2383,32 +3197,39 @@ paths:
                 type: object
                 required: [data, meta]
                 properties:
-                  data:
-                    type: object
-                    required: [fingerprint, roots]
-                    properties:
-                      fingerprint:
-                        type: string
-                        description: Opaque token the sweep must match.
-                      roots:
-                        type: integer
-                        description: Number of closed roots the sweep would move.
-                      descendants:
-                        type: integer
-                      blocked:
-                        type: integer
-                        description: Closed roots whose subtree still holds open work.
+                  data: { $ref: "#/components/schemas/ArchivePreview" }
                   meta: { $ref: "#/components/schemas/ResponseMeta" }
               examples:
                 default:
                   value:
                     data:
-                      fingerprint: "sweep.a1b2c3"
-                      roots: 4
-                      descendants: 6
-                      blocked: 0
+                      roots: 1
+                      descendants: 1
+                      records: 2
+                      candidate_ids: ["aaaa0008", "bbbb0003"]
+                      open_descendants: 0
+                      blocked: []
+                      fingerprint: "3f0c9d…"
                     meta:
                       store_revision: "s1.6f2a9c0b"
+                blocked:
+                  value:
+                    data:
+                      roots: 1
+                      descendants: 1
+                      records: 2
+                      candidate_ids: ["ffff0001", "ffff0002"]
+                      open_descendants: 1
+                      blocked:
+                        - root_id: "ffff0001"
+                          root_title: "Closed parent"
+                          open_ids: ["ffff0002"]
+                          open_titles: ["Still open"]
+                      fingerprint: "9a41e2…"
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2419,8 +3240,17 @@ paths:
       summary: Sweep closed tasks into the archive when the preview still matches.
       description: |
         Moves the previewed closed tasks into `archive.jsonl` as one journal
-        entry, but only when the supplied `fingerprint` still matches the
-        current preview. A changed preview returns `409`.
+        entry (labelled `archive sweep`, so `/history/undo` reverts it), but only
+        when the supplied `fingerprint` still matches the current preview. A
+        write that does not change the moved set — editing an open task, say —
+        leaves the fingerprint valid. Every refusal is `409 conflict` whose
+        `details.reason` is the CLI's `reason` for the same refusal:
+        `preview_changed` (with the current `fingerprint`), `open_descendants`
+        (with `open_descendants` and the `blocked` rows), or `archive_conflict`
+        (with `conflicting_ids`: the archive already holds partial or differing
+        copies). A write that was rolled back is `503` with
+        `details.reason: write_failed`. CLI equivalent:
+        `tasks archive --fingerprint FP --json`.
       requestBody:
         required: true
         content:
@@ -2436,7 +3266,7 @@ paths:
             examples:
               default:
                 value:
-                  fingerprint: "sweep.a1b2c3"
+                  fingerprint: "3f0c9d…"
       responses:
         "200":
           description: Sweep applied. (200, not 201 — a sweep is an action with no addressable created resource.)
@@ -2446,23 +3276,19 @@ paths:
                 type: object
                 required: [data, meta]
                 properties:
-                  data:
-                    type: object
-                    required: [swept]
-                    properties:
-                      swept:
-                        type: integer
-                        description: Number of tasks moved to the archive.
+                  data: { $ref: "#/components/schemas/ArchiveSweepResult" }
                   meta: { $ref: "#/components/schemas/ResponseMeta" }
               examples:
                 default:
                   value:
                     data:
-                      swept: 10
+                      roots: 1
+                      records: 2
+                      moved_ids: ["aaaa0008", "bbbb0003"]
                     meta:
                       store_revision: "s1.9c3d4e5f"
         "409":
-          description: The preview changed.
+          description: The preview changed, a root is blocked, or the archive already holds conflicting copies.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2472,8 +3298,33 @@ paths:
                     error:
                       code: "conflict"
                       message: "The archive preview changed; refetch it and retry."
-                      details: { fingerprint: "sweep.a1b2c3" }
+                      details: { reason: "preview_changed", fingerprint: "9a41e2…" }
                       request_id: "req_8c3e"
+                open_descendants:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "Closed roots still contain open work; complete, cancel, move, or unnest it, then retry."
+                      details:
+                        reason: "open_descendants"
+                        open_descendants: 1
+                        blocked:
+                          - root_id: "ffff0001"
+                            root_title: "Closed parent"
+                            open_ids: ["ffff0002"]
+                            open_titles: ["Still open"]
+                      request_id: "req_8c3f"
+                archive_conflict:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The archive already holds partial or conflicting copies of the candidate ids; live tasks were preserved."
+                      details: { reason: "archive_conflict", conflicting_ids: ["aaaa0008"] }
+                      request_id: "req_8c40"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/ValidationFailed"
         "503":
@@ -2485,15 +3336,27 @@ paths:
       operationId: streamEvents
       summary: Server-sent store-change invalidation stream.
       description: |
-        A `text/event-stream` that emits a `store.changed` event whenever a CLI,
-        TUI, or API write replaces either file. The event payload carries the
-        new global `store_revision`; clients then refetch affected queries with
-        ordinary GETs. This is invalidation, not event sourcing.
+        A `text/event-stream` that emits a `store.changed` event whenever either
+        file's bytes change — a CLI, TUI, or API write, or an out-of-band edit.
+        The event payload carries the new global `store_revision`, which is also
+        the event `id`; clients then refetch affected queries with ordinary
+        GETs. This is invalidation, not event sourcing: several writes between
+        two polls produce one event.
 
-        SSE is deferred behind conditional polling of `/meta` in v1: every open
-        SSE response holds one server goroutine for its lifetime, so
-        the streaming path needs a sized thread budget before it ships. Polling
-        `/meta` (comparing `store_revision`) is the v1 default.
+        - The first frame carries the revision at connect time, so a client
+          that reconnects learns about changes it missed. A client that sends
+          `Last-Event-ID` equal to the current revision (EventSource does this
+          automatically) is not sent that first frame.
+        - The server polls the revision about once a second per stream and
+          writes a `: keep-alive` comment after 15 seconds of silence.
+        - Open streams are capped (8 by default). Beyond the cap, and while the
+          server is shutting down, the request is refused with `503
+          unavailable` (`details.reason: stream_limit`, `Retry-After`); fall
+          back to conditional polling of `/meta`.
+        - A stream ends when the client disconnects or the server shuts down.
+
+        Clients should prefer this stream when `capabilities.events` is true
+        and fall back to `If-None-Match` polling of `/meta` otherwise.
       responses:
         "200":
           description: An event stream.
@@ -2502,16 +3365,41 @@ paths:
               schema:
                 type: string
                 description: |
-                  SSE frames. Each `store.changed` event has a `data:` line whose
-                  JSON body is `{ "store_revision": "..." }`.
+                  SSE frames. Each `store.changed` event has an `id:` line (the
+                  revision) and a `data:` line whose JSON body is
+                  `{ "store_revision": "..." }`. Comment lines (`:`) are
+                  heartbeats and carry no data.
               examples:
                 store_changed:
                   summary: One store.changed frame.
                   value: |
+                    id: s1.8b2c3d4e
                     event: store.changed
                     data: {"store_revision":"s1.8b2c3d4e"}
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
-          $ref: "#/components/responses/StoreInvalid"
+          description: |
+            The stream budget is spent or the server is shutting down
+            (`details.reason: stream_limit` names the former), or the store
+            revision could not be read.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying (stream limit only).
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                stream_limit:
+                  value:
+                    error:
+                      code: "unavailable"
+                      message: "Too many open event streams; close one or poll /meta with If-None-Match."
+                      details: { reason: "stream_limit", limit: 8 }
+                      request_id: "req_5e6f"
 
   /healthz:
     servers:
@@ -2605,9 +3493,14 @@ components:
       required: true
       description: |
         The opaque task `revision` (ETag) the client last saw. Required on
-        PATCH, DELETE, and every task action (approve, reject, unreject, delegate,
-        undelegate, claim, release, work_ref). A missing header is `428`; a
-        stale value is `412`.
+        PATCH, DELETE, and every task action (activate, approve, reject,
+        unreject, delegate, undelegate, claim, release, work_ref,
+        delegation_note). A missing header is `428`; a stale value is `412`.
+
+        One exception: a PATCH whose members are ALL delta members
+        (`add_tags`, `remove_tags`, `add_contexts`, `remove_contexts`,
+        `append_body`) may send `If-Match: *`, which asserts only that the task
+        exists. `*` on any other write is `428`.
       schema: { type: string }
 
   responses:
@@ -2664,7 +3557,10 @@ components:
                   details: {}
                   request_id: "req_2d3e"
     NotFound:
-      description: No such task in the requested source.
+      description: |
+        No such task in the requested source. A method and path no route serves
+        is also `404 not_found`, with the message "No endpoint matches that
+        method and path." rather than the task sentence.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2676,6 +3572,40 @@ components:
                   message: "No task with that id."
                   details: {}
                   request_id: "req_3c4d"
+    ViewNotFound:
+      description: No view with that name.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            unknown_view:
+              value:
+                error:
+                  code: "not_found"
+                  message: "No view with that name."
+                  details:
+                    name: "projects"
+                    views: [agenda, next, quadrants, inbox, outline]
+                  request_id: "req_3c4e"
+    SectionActionRefused:
+      description: |
+        The section holds the file together rather than holding work: the Inbox
+        (where unfiled captures land) and the "Projects" heading (what makes its
+        children projects) cannot be renamed, completed, dropped or archived.
+        Reopen is always allowed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            inbox:
+              value:
+                error:
+                  code: "conflict"
+                  message: "The Inbox is where unfiled captures land; it cannot be renamed, closed, or archived."
+                  details:
+                    id: "cccc0001"
+                    kind: "inbox"
+                  request_id: "req_3c4f"
     StaleRevision:
       description: |
         The supplied `If-Match` no longer matches the task's current revision.
@@ -2760,7 +3690,11 @@ components:
                     at: "2026-07-27T18:04:11Z"
                   request_id: "req_7a8b"
     MissingPrecondition:
-      description: A required `If-Match` header was absent.
+      description: |
+        A required `If-Match` header was absent, or was `*`. The wildcard
+        asserts only that the task exists, which is a precondition only a
+        delta-only `PATCH` accepts; every other write needs the task's
+        revision.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2772,6 +3706,13 @@ components:
                   message: "This write requires an If-Match header."
                   details: {}
                   request_id: "req_5e6f"
+            wildcard:
+              value:
+                error:
+                  code: "missing_precondition"
+                  message: "If-Match: * is accepted only on a PATCH whose members are all deltas (add_tags, remove_tags, add_contexts, remove_contexts, append_body); send the task's revision."
+                  details: {}
+                  request_id: "req_5e70"
     ValidationFailed:
       description: |
         A semantic value was invalid, or an unknown field was sent. `details`
@@ -2796,8 +3737,11 @@ components:
         matches (another surface wrote since it was observed), there is no
         step in that direction, or the journal refused the step because the
         files were edited out of band. `details.reason` distinguishes
-        `stale_store_revision`, `empty`, and `journal_conflict` for history
-        conflicts.
+        `stale_store_revision` (with the current `details.store_revision`),
+        `empty`, and `journal_conflict` (with the `details.label` it declined to
+        apply). The CLI's `undo`/`redo --json` refusals use the same words:
+        `reason` on a `conflict` error for the first and last, and the `empty`
+        error code for the middle.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2818,6 +3762,13 @@ components:
                   message: "Nothing to undo."
                   details: { reason: "empty" }
                   request_id: "req_1d2e"
+            journal_conflict:
+              value:
+                error:
+                  code: "conflict"
+                  message: "The task files changed outside the journal since that edit; refusing to undo it."
+                  details: { reason: "journal_conflict", label: "capture: Weekly review" }
+                  request_id: "req_1d2f"
     StoreInvalid:
       description: |
         The operation could not proceed against the backing store: the store is
@@ -2971,6 +3922,25 @@ components:
           minLength: 1
           maxLength: 200
 
+    FormalLinkInput:
+      type: object
+      description: |
+        One formal link in a write. `url` is an `http`/`https` URL with a host,
+        or `name:value` where `name` is a configured shorthand (see
+        `Meta.link_shorthands`): `jira:OPS-1234` stores the expanded URL, with
+        the token as its label unless `label` is given. Duplicates are judged
+        on the expanded URL. Any other value is `422`.
+      required: [url]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          maxLength: 2000
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+
     Link:
       type: object
       description: A derived, read-only member of the task's openable link union.
@@ -2998,6 +3968,36 @@ components:
           description: |
             Opaque global change token. A refresh signal for browser queries,
             not a per-task write precondition.
+        effects: { $ref: "#/components/schemas/WriteEffects" }
+
+    WriteEffects:
+      type: object
+      description: |
+        What a task write changed beyond the task it returns, as the store
+        reported it inside the transaction. Present on a write response only
+        when there is something to report.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        rolled:
+          type: object
+          description: |
+            `state: DONE` on a recurring task rolled it forward and left it
+            open. `from` and `to` are the anchor date before and after — the
+            deadline when the task has one, else its available-from date.
+          required: [from, to]
+          additionalProperties: false
+          properties:
+            from: { $ref: "#/components/schemas/IsoDate" }
+            to: { $ref: "#/components/schemas/IsoDate" }
+        touched_ids:
+          type: array
+          description: |
+            Every task id the write changed, the returned task first. Present
+            only when that includes a task other than the returned one — for
+            example a completion that cascaded DONE over open descendants, or a
+            move that carried descendants with it.
+          items: { $ref: "#/components/schemas/TaskId" }
 
     Meta:
       type: object
@@ -3005,7 +4005,8 @@ components:
       required: [api_version, server_mode, states, proposed_states, open_states,
                  closed_states, priorities, delegation_kinds, delegation_modes,
                  delegation_statuses, max_depth, urgent_days,
-                 timezone, time_format, tzdb_version, temporal_precision]
+                 timezone, time_format, tzdb_version, temporal_precision,
+                 date_order, link_shorthands, link_systems, capabilities]
       additionalProperties: false
       properties:
         api_version: { type: string }
@@ -3054,19 +4055,83 @@ components:
         time_format: { type: integer, enum: [12, 24] }
         tzdb_version: { type: string }
         temporal_precision: { type: string, enum: [minute] }
+        date_order:
+          type: string
+          enum: [mdy, dmy]
+          description: |
+            How an ambiguous numeric date is read (`date_order` config):
+            `mdy` reads `10/2` as October 2, `dmy` as February 10.
+            `GET /dates/parse` honors it.
+        link_shorthands:
+          type: object
+          description: |
+            The configured `link.<name>` URL templates. A formal-link `url` of
+            the form `name:value` expands through the template — `%s` is
+            replaced by the value, and a template without `%s` is a prefix — on
+            `POST /tasks` `links`, `PATCH` `formal_links`, and the CLI alike.
+            Empty object when none are configured.
+          additionalProperties: { type: string }
+        link_systems:
+          type: object
+          description: |
+            The configured `system.<name>` host rows that extend link
+            classification, so a client can name `links[].system` the way the
+            server does. Empty object when none are configured.
+          additionalProperties: { type: string }
         capabilities:
           type: object
           description: |
             Feature flags for the running server. A capability is true only when
             its backing endpoints are routed by this server, not merely when the
-            store supports the operation. undo/redo/archive_sweep are false until
-            the manager endpoints (/history, /archive-sweeps) are implemented.
+            store supports the operation, so a client can tell a missing route
+            from an empty answer. Feature-detect on these rather than on a
+            version: a server older than a feature omits its flag, and an absent
+            flag means false. Unknown flags must be ignored.
           additionalProperties: { type: boolean }
+          properties:
+            projects:
+              type: boolean
+              description: "`/projects` and the section actions under `/projects/{id}`."
+            undo:
+              type: boolean
+              description: "`GET /history` and `POST /history/undo`."
+            redo:
+              type: boolean
+              description: "`GET /history` and `POST /history/redo`."
+            archive_sweep:
+              type: boolean
+              description: "`GET /archive-preview` and `POST /archive-sweeps`."
+            events:
+              type: boolean
+              description: The `/events` Server-Sent Events stream.
+            views:
+              type: boolean
+              description: "`GET /views/{name}` (agenda, next, quadrants, inbox)."
+            activate:
+              type: boolean
+              description: "`POST /tasks/{id}/activate`."
+            patch_deltas:
+              type: boolean
+              description: |
+                `PATCH /tasks/{id}` accepts the delta members (`add_tags`,
+                `remove_tags`, `add_contexts`, `remove_contexts`,
+                `append_body`) and `If-Match: *` on a delta-only body.
+            date_parse:
+              type: boolean
+              description: "`GET /dates/parse`."
+            lead_explain:
+              type: boolean
+              description: "`GET /lead/explain`."
+            outline:
+              type: boolean
+              description: "`GET /views/outline`."
 
     Section:
       type: object
-      description: A live section (project heading).
-      required: [id, title, parent_id]
+      description: |
+        A live section. Every member is always present; `body`, `state` and
+        `closed` are null when absent.
+      required: [id, title, parent_id, kind, body, state, closed]
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/TaskId" }
@@ -3075,6 +4140,138 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/TaskId" }
             - { type: "null" }
+        kind: { $ref: "#/components/schemas/SectionKind" }
+        body:
+          type: [string, "null"]
+          description: The section's body note, or null.
+        state:
+          description: Section lifecycle state, null when open.
+          oneOf:
+            - { type: string, enum: [DONE, CANCELLED] }
+            - { type: "null" }
+        closed:
+          description: Date the section was closed, null when open.
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+
+    SectionKind:
+      type: string
+      enum: [inbox, projects_root, project, area, list, subsection]
+      description: |
+        The section's structural role. `inbox` is the top-level Inbox;
+        `projects_root` the top-level "Projects" heading; `project` a direct
+        child of it; `list` a top-level saved GTD list (Next Actions, Waiting
+        For, Someday / Maybe); `area` any other top-level section, whether or
+        not it holds open work today (the `/projects` listing is narrower); and
+        `subsection` anything nested deeper. Sections carry no stored role, so
+        the reserved ones are recognised by title.
+
+    OutlineSection:
+      type: object
+      description: |
+        The Section members plus the outline's task tallies, all at any depth.
+        Spelled out rather than composed with `allOf`, because Section is closed
+        (`additionalProperties: false`) and would reject the tallies.
+      required: [id, title, parent_id, kind, body, state, closed,
+                 task_count, open_task_count, closed_task_count, hidden_closed_count]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/TaskId" }
+        title: { type: string }
+        parent_id:
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        kind: { $ref: "#/components/schemas/SectionKind" }
+        body:
+          type: [string, "null"]
+        state:
+          oneOf:
+            - { type: string, enum: [DONE, CANCELLED] }
+            - { type: "null" }
+        closed:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+        task_count:
+          type: integer
+          minimum: 0
+          description: Tasks beneath that this outline response shows — the TUI's section badge.
+        open_task_count:
+          type: integer
+          minimum: 0
+          description: Open (INBOX, TODO, NEXT, WAITING) tasks beneath, deferred included.
+        closed_task_count:
+          type: integer
+          minimum: 0
+          description: DONE and CANCELLED tasks beneath, shown or not.
+        hidden_closed_count:
+          type: integer
+          minimum: 0
+          description: |
+            Closed tasks and closed sections beneath that `include_closed=false`
+            is holding back — the TUI's `· N closed` marker. Zero when
+            `include_closed=true`.
+
+    OutlineNode:
+      type: object
+      description: |
+        One row of the outline. `parent_id` and `depth` describe the outline AS
+        SHOWN: a hidden row (a proposal, or a closed task or section while
+        `include_closed=false`) is transparent, so its children carry on one
+        level up and name the nearest shown ancestor. Exactly one of `section`
+        and `task` is non-null, as `kind` says.
+      required: [kind, id, parent_id, depth, section, task]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [section, task]
+        id: { $ref: "#/components/schemas/TaskId" }
+        parent_id:
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        depth:
+          type: integer
+          minimum: 0
+        section:
+          oneOf:
+            - { $ref: "#/components/schemas/OutlineSection" }
+            - { type: "null" }
+        task:
+          oneOf:
+            - { $ref: "#/components/schemas/Task" }
+            - { type: "null" }
+
+    ViewGroup:
+      type: object
+      description: |
+        One bucket of a named view, in the order a grouped surface lays them
+        out. `task_ids` reference rows of the response's `tasks`, in the order
+        the group lists them.
+      required: [block, key, label, task_ids]
+      additionalProperties: false
+      properties:
+        block:
+          description: |
+            The intake block for `inbox` (`approvals` above `inbox`), null for
+            every other view.
+          oneOf:
+            - { type: string, enum: [approvals, inbox] }
+            - { type: "null" }
+        key:
+          type: string
+          description: |
+            agenda: `overdue`, `today`, `tomorrow`, `later`. next: the
+            `@context`, or `(no context)`. quadrants: `Q1`..`Q4` (the same
+            spelling `tasks quadrants --json` uses). inbox: the enclosing
+            project section's title, or `Inbox` for the unfiled bucket.
+        label:
+          type: string
+          description: Display text — the quadrant heading, the day name, or the key.
+        task_ids:
+          type: array
+          items: { $ref: "#/components/schemas/TaskId" }
 
     Project:
       type: object
@@ -3111,7 +4308,14 @@ components:
             - { type: "null" }
         kind:
           type: string
-          enum: [project, area]
+          enum: [project, area, list]
+          description: |
+            The Projects listing's vocabulary: `project`, `area`, or `list` for
+            a saved GTD list. A section action's response on a section the
+            listing does not admit keeps that vocabulary rather than the finer
+            SectionKind: a nested sub-section and the Inbox read `list`, a
+            top-level area with no open work and the "Projects" heading read
+            `area`. `GET /views/outline` and `/sections` carry the exact role.
         open_count:
           type: integer
           minimum: 0
@@ -3149,9 +4353,8 @@ components:
             - { type: "null" }
         closed:
           description: Date the section was closed, null when open.
-          oneOf:
+          allOf:
             - { $ref: "#/components/schemas/IsoDate" }
-            - { type: "null" }
         task_ids:
           type: array
           description: Ids of the rolled-up open, non-deferred tasks in DFS order.
@@ -3249,6 +4452,69 @@ components:
             input: { type: string }
             error: { type: string }
 
+    DateParse:
+      description: |
+        The result of reading one date input. A parsed value has `date` and
+        no `error`; unparsable input has `error` and nothing else. `input` is
+        echoed verbatim in both.
+      oneOf:
+        - title: Parsed
+          type: object
+          required: [input, date, time, human]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            date: { $ref: "#/components/schemas/IsoDateOnly" }
+            time:
+              description: |
+                Null for an all-day value; otherwise exactly the
+                `TaskTimeInput` a write accepts. `timezone: null` is floating.
+              allOf:
+                - { $ref: "#/components/schemas/TaskTimeInput" }
+            human:
+              type: string
+              description: |
+                The value as a person reads it, in the server's `time_format`;
+                the year appears only when it is not the current one.
+        - title: Unparsable
+          type: object
+          required: [input, error]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            error: { type: string }
+
+    LeadExplanation:
+      description: |
+        The result of reading one lead-time input. A span or clearing word has
+        `canonical`; unreadable input has `error` and nothing else.
+      oneOf:
+        - title: Parsed
+          type: object
+          required: [input, canonical, human, opens]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            canonical:
+              type: [string, "null"]
+              description: The value a write would store, or null for a clearing word.
+            human: { type: string }
+            opens:
+              description: |
+                The date the window opens before `anchor`. Null without an
+                anchor, for a clearing word, and for an hour span (`5h`), whose
+                window opens at an instant that depends on the anchor's time.
+              oneOf:
+                - { $ref: "#/components/schemas/IsoDateOnly" }
+                - { type: "null" }
+        - title: Unparsable
+          type: object
+          required: [input, error]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            error: { type: string }
+
     Task:
       type: object
       description: |
@@ -3277,6 +4543,7 @@ components:
         - availability_reason
         - availability_blocker_id
         - available_at
+        - quadrant
         - recurrence
         - recurrence_human
         - lead
@@ -3284,15 +4551,19 @@ components:
         - lead_opens
         - lead_opens_at
         - body
+        - created
+        - updated
         - closed
         - rejected
         - archived
+        - archived_on
         - project
         - child_count
         - descendant_count
         - formal_links
         - links
         - delegation
+        - agent_ready
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/TaskId" }
@@ -3301,7 +4572,9 @@ components:
           description: |
             Opaque optimistic-concurrency token, mirrored as the HTTP ETag.
             Compare for equality only; the internal structure is not part of
-            this contract (see ADR-0007).
+            this contract (see ADR-0007). It covers every writable own field,
+            `formal_links` included, so a write made under a stale `If-Match`
+            is refused with 412 rather than overwriting a concurrent edit.
         source:
           type: string
           enum: [live, archive]
@@ -3318,7 +4591,10 @@ components:
         depth:
           type: integer
           minimum: 0
-          description: Nesting depth below its section (0 for a top-level task).
+          description: |
+            Number of task ancestors: 0 for a task directly under a section,
+            however deeply that section nests (a project under "Projects"
+            counts the same as Inbox), 1 for its child, and so on.
         state: { $ref: "#/components/schemas/State" }
         priority: { $ref: "#/components/schemas/Priority" }
         title:
@@ -3368,6 +4644,19 @@ components:
           type: [string, "null"]
           format: date-time
           readOnly: true
+        quadrant:
+          type: [string, "null"]
+          enum: [Q1, Q2, Q3, Q4, null]
+          readOnly: true
+          description: |
+            The Eisenhower quadrant, by the same classifier `tasks quadrants`
+            uses: important is priority A or B or the `important` tag; urgent
+            is a deadline within the configured `urgent_days`
+            (`Meta.urgent_days`, overdue included) or the `urgent` tag. `Q1`
+            important and urgent, `Q2` important only, `Q3` urgent only, `Q4`
+            neither. Null for a proposed, closed, or archived task. Unlike the
+            quadrants view, an open task that is not currently available still
+            carries its quadrant.
         recurrence:
           type: [string, "null"]
           description: |
@@ -3429,6 +4718,28 @@ components:
           type: array
           description: The task's own notes, split to lines. A child's body never leaks in.
           items: { type: string }
+        created:
+          allOf:
+            - $ref: "#/components/schemas/IsoDate"
+          readOnly: true
+          description: |
+            The day the task was captured, or null. The store keeps no
+            separate creation stamp, so this is read from the
+            `Captured [YYYY-MM-DD].` note every capture writes as the first
+            body line: the first body line of that shape with a real calendar
+            date wins. A body edit that removes the note leaves the task
+            undated (null) rather than approximated.
+        updated:
+          type: [string, "null"]
+          format: date-time
+          readOnly: true
+          description: |
+            When the task record last changed, as a UTC instant, from the
+            store's per-record last-write stamp. A write that changes this
+            record's own stored fields moves it; a change to a child, or a
+            reorder that leaves this record's fields alone, does not. Null
+            when the record carries no valid stamp (not written since stamping
+            began, or hand-edited). Not part of `revision`.
         closed: { $ref: "#/components/schemas/IsoDate" }
         rejected:
           allOf:
@@ -3442,6 +4753,15 @@ components:
         archived:
           type: boolean
           description: True when this resource comes from the read-only archive.
+        archived_on:
+          allOf:
+            - $ref: "#/components/schemas/IsoDate"
+          readOnly: true
+          description: |
+            The day this task was swept into the archive, or null for a live
+            task. A sweep stamps the subtree root, so a descendant reports its
+            nearest stamped ancestor's date; an archived record with no stamp
+            anywhere above it reports null.
         project:
           type: [string, "null"]
           description: Nearest open project (a live parent task, else the enclosing section).
@@ -3481,6 +4801,15 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/Delegation" }
             - { type: "null" }
+        agent_ready:
+          type: boolean
+          readOnly: true
+          description: |
+            True when the task is in the claimable agent queue — exactly the
+            rule `GET /tasks?scope=agent_ready` and `tasks list --agent-ready`
+            apply: an agent delegation with status `ready` (unclaimed), on a
+            live task in an open state (INBOX, TODO, NEXT, WAITING) that is
+            currently `available`.
 
     DelegationKind:
       type: string
@@ -3744,6 +5073,13 @@ components:
         title:
           type: string
           minLength: 1
+          description: |
+            A title whose LAST word is an `http`/`https` URL lifts that URL into
+            a formal link and keeps the remaining words as the title, exactly as
+            `tasks capture` does: trailing sentence punctuation stays on the
+            title, a title that is only a URL keeps its title and still gains
+            the link, and a URL already in `links` is not added twice. Shorthand
+            tokens are never lifted. `PATCH` never rewrites a title.
         priority: { $ref: "#/components/schemas/Priority" }
         tags:
           type: array
@@ -3776,9 +5112,10 @@ components:
             spelling of PATCH's `formal_links`, with the same entry shape,
             validation, deduplication, and 50-entry cap, and the CLI parity of
             `tasks capture --link URL [--label TEXT]`. They are written in the
-            same transaction as the task, so one undo removes both.
+            same transaction as the task, so one undo removes both. Configured
+            shorthands expand (see `FormalLinkInput`).
           maxItems: 50
-          items: { $ref: "#/components/schemas/FormalLink" }
+          items: { $ref: "#/components/schemas/FormalLinkInput" }
         scheduled:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
@@ -3882,12 +5219,17 @@ components:
         `TaskChangeset::FIELD_ORDER`. A date without its companion time field
         preserves existing time metadata. A time object replaces the whole
         companion; time null makes the date all-day; date null clears both.
-        Non-null time with a null date is rejected.
+        Non-null time with a null date is rejected. The delta members edit the
+        stored value instead of replacing it and are mutually exclusive with the
+        fields they edit (a tag delta owns the whole tag sequence, so it also
+        excludes `deferred`).
       additionalProperties: false
       minProperties: 1
       allOf:
         - not:
             required: [parent_id, placement]
+        - not:
+            required: [append_body, body]
       properties:
         title:
           type: string
@@ -3899,9 +5241,11 @@ components:
             - { type: array, items: { type: string } }
         formal_links:
           type: array
-          description: Full replacement of the task's ordered stored formal-link list.
+          description: |
+            Full replacement of the task's ordered stored formal-link list.
+            Configured shorthands expand (see `FormalLinkInput`).
           maxItems: 50
-          items: { $ref: "#/components/schemas/FormalLink" }
+          items: { $ref: "#/components/schemas/FormalLinkInput" }
         contexts:
           type: array
           items: { type: string }
@@ -3943,6 +5287,94 @@ components:
         placement:
           $ref: "#/components/schemas/TaskPlacement"
         state: { $ref: "#/components/schemas/State" }
+        add_tags:
+          type: array
+          description: Ordinary tags to add, in order, if not already present. Excludes `tags`, `contexts`, `deferred`.
+          items: { type: string }
+        remove_tags:
+          type: array
+          description: Ordinary tags to remove. Excludes `tags`, `contexts`, `deferred`.
+          items: { type: string }
+        add_contexts:
+          type: array
+          description: "@contexts to add, in order, if not already present. Excludes `tags`, `contexts`, `deferred`."
+          items: { type: string, pattern: "^@.+" }
+        remove_contexts:
+          type: array
+          description: "@contexts to remove. Excludes `tags`, `contexts`, `deferred`."
+          items: { type: string, pattern: "^@.+" }
+        append_body:
+          description: |
+            Text appended as the body's last line (or the whole body when it has
+            none); a list of lines is joined with newlines first. Must not be
+            blank: text that is empty or only whitespace is `422`, as
+            `tasks note` refuses it. Excludes `body`.
+          oneOf:
+            - { type: string, minLength: 1 }
+            - { type: array, minItems: 1, items: { type: string } }
+
+    ArchiveBlock:
+      type: object
+      description: A closed root the sweep refuses to move, with the open work under it.
+      required: [root_id, root_title, open_ids, open_titles]
+      additionalProperties: false
+      properties:
+        root_id: { $ref: "#/components/schemas/TaskId" }
+        root_title: { type: string }
+        open_ids:
+          type: array
+          items: { $ref: "#/components/schemas/TaskId" }
+        open_titles:
+          type: array
+          description: Titles of `open_ids`, in the same order.
+          items: { type: string }
+
+    ArchivePreview:
+      type: object
+      description: |
+        What the next sweep would move. The CLI's `archive --dry-run --json`
+        prints this exact document.
+      required: [roots, descendants, records, candidate_ids, open_descendants, blocked, fingerprint]
+      additionalProperties: false
+      properties:
+        roots:
+          type: integer
+          description: Closed roots the sweep would move (the count the CLI's human line reports).
+        descendants:
+          type: integer
+          description: Tasks beneath those roots.
+        records:
+          type: integer
+          description: Every record the sweep would move; the length of `candidate_ids`.
+        candidate_ids:
+          type: array
+          description: Every id the sweep would move, roots and descendants, in file order.
+          items: { $ref: "#/components/schemas/TaskId" }
+        open_descendants:
+          type: integer
+          description: Open tasks blocking the sweep, across every blocked root.
+        blocked:
+          type: array
+          description: Closed roots that still contain open work. Non-empty means the sweep will refuse.
+          items: { $ref: "#/components/schemas/ArchiveBlock" }
+        fingerprint:
+          type: string
+          description: Opaque token the sweep must match.
+
+    ArchiveSweepResult:
+      type: object
+      description: |
+        A completed sweep; the CLI's `archive --json` document, member for
+        member. `records` is the length of `moved_ids`. Deliberately not named
+        `archived`, which `POST /projects/{id}/archive` uses for its own count.
+      required: [roots, records, moved_ids]
+      additionalProperties: false
+      properties:
+        roots: { type: integer }
+        records: { type: integer }
+        moved_ids:
+          type: array
+          items: { $ref: "#/components/schemas/TaskId" }
 
     HistoryStepRequest:
       type: object

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/query"
 	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/store"
@@ -65,6 +66,18 @@ type Options struct {
 	// QueryOptions are passed to every taskquery built here — the link
 	// shorthand and system configuration a read surface needs.
 	QueryOptions []taskquery.Option
+
+	// LinkShorthands are the configured `link.<name>` URL templates
+	// (`jira` → `https://jira.example/browse/%s`). Every formal-link input the
+	// application accepts expands through them, so `jira:OPS-1234` means the
+	// same URL whichever surface it was typed into.
+	LinkShorthands map[string]string
+
+	// LinkSystems are the configured `system.<name>` host rows that extend link
+	// classification. The application only carries them so a surface can
+	// publish the resolved configuration; classification itself is the read
+	// model's, configured through QueryOptions.
+	LinkSystems map[string]string
 }
 
 var hostContextPattern = regexp.MustCompile(`^@\S+$`)
@@ -77,6 +90,8 @@ type Application struct {
 	hostContext         string
 	delegationKeySource func() string
 	queryOptions        []taskquery.Option
+	linkShorthands      map[string]string
+	linkSystems         map[string]string
 }
 
 // New validates the options and builds an application.
@@ -93,6 +108,8 @@ func New(options Options) (*Application, error) {
 		hostContext:         options.HostContext,
 		delegationKeySource: options.DelegationKeySource,
 		queryOptions:        append([]taskquery.Option{}, options.QueryOptions...),
+		linkShorthands:      copyMap(options.LinkShorthands),
+		linkSystems:         copyMap(options.LinkSystems),
 	}, nil
 }
 
@@ -107,6 +124,32 @@ func NewWithStore(built func() *store.Store, context func() temporal.Context) (*
 
 // HostContext is the configured machine context, or "" when there is none.
 func (a *Application) HostContext() string { return a.hostContext }
+
+// LinkShorthands is a copy of the configured `link.<name>` templates.
+func (a *Application) LinkShorthands() map[string]string { return copyMap(a.linkShorthands) }
+
+// LinkSystems is a copy of the configured `system.<name>` host rows.
+func (a *Application) LinkSystems() map[string]string { return copyMap(a.linkSystems) }
+
+// ExpandFormalLink resolves one formal-link input — a web URL, or a configured
+// shorthand such as `jira:OPS-1234` — into the link a write stores. A
+// shorthand's raw token becomes the default label. ok=false means the input is
+// neither, and the caller refuses it.
+func (a *Application) ExpandFormalLink(raw string) (links.FormalLink, bool) {
+	url, label, ok := links.ExpandFormal(raw, a.linkShorthands)
+	if !ok {
+		return links.FormalLink{}, false
+	}
+	return links.FormalLink{URL: url, Label: label}, true
+}
+
+func copyMap(values map[string]string) map[string]string {
+	copied := make(map[string]string, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
+}
 
 // -- clocks and stores --------------------------------------------------------
 

@@ -546,7 +546,7 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 		// Closed sections are hidden unless the reader has asked for them, and
 		// hiding is transparent — children carry on at the same depth, so an
 		// open task under a closed project stays visible.
-		if node.HasClosed && !request.ShowClosed {
+		if !taskquery.OutlineShows(node, request.ShowClosed) {
 			for _, child := range node.Children {
 				rows = appendOutlineNode(request, rows, child, depth, band)
 			}
@@ -811,24 +811,7 @@ func outlineShows(request BuildRequest, item store.Item) bool {
 // and the mouse's chevron target all key off this, because a chevron that opens
 // onto nothing is a lie about the tree.
 func outlineRenders(request BuildRequest, node *taskquery.Node) bool {
-	for _, child := range node.Children {
-		if child.Section() {
-			if child.HasClosed && !request.ShowClosed {
-				if outlineRenders(request, child) {
-					return true
-				}
-				continue
-			}
-			return true
-		}
-		if outlineShows(request, *child.Item) {
-			return true
-		}
-		if outlineRenders(request, child) {
-			return true
-		}
-	}
-	return false
+	return taskquery.OutlineRenders(node, request.ShowClosed)
 }
 
 // outlineSectionBadge is a section's value in the shared meta column.
@@ -861,34 +844,14 @@ func outlineSectionBadge(request BuildRequest, node *taskquery.Node) string {
 // than rows so collapsing a subtree cannot make a section look emptier than it
 // is.
 func outlineTaskCount(request BuildRequest, node *taskquery.Node) int {
-	total := 0
-	for _, child := range node.Children {
-		if child.Task() && outlineShows(request, *child.Item) {
-			total++
-		}
-		total += outlineTaskCount(request, child)
-	}
-	return total
+	return taskquery.OutlineShownCount(node, request.ShowClosed)
 }
 
 // outlineHiddenClosedCount is how many closed tasks the toggle is holding back
 // anywhere beneath a node — the number behind a section's `· N closed` marker.
 // With the toggle on it is zero by construction: nothing is being held back.
 func outlineHiddenClosedCount(request BuildRequest, node *taskquery.Node) int {
-	if request.ShowClosed {
-		return 0
-	}
-	total := 0
-	for _, child := range node.Children {
-		if child.Section() && child.HasClosed {
-			total++
-		}
-		if child.Task() && isClosedState(child.Item.State) {
-			total++
-		}
-		total += outlineHiddenClosedCount(request, child)
-	}
-	return total
+	return taskquery.OutlineHiddenClosedCount(node, request.ShowClosed)
 }
 
 // outlineDescendantCount is the dim count a folded row carries: every ROW the
@@ -1617,7 +1580,7 @@ func subtreeItems(request BuildRequest, anchor *taskquery.Node) []store.Item {
 // visible subtree. An anchor's later own date must not hide an earlier
 // qualifying descendant date.
 func agendaAnchorDate(request BuildRequest, query ViewQuery, node *taskquery.Node) float64 {
-	best := query.temporalSortKey(*node.Item)
+	best := query.TemporalSortKey(*node.Item)
 	for _, child := range visibleChildren(request, node) {
 		if candidate := agendaAnchorDate(request, query, child); candidate < best {
 			best = candidate

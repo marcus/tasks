@@ -539,7 +539,7 @@ func (m *Model) DeferSelected() {
 			choice := strings.ToLower(strings.TrimSpace(raw))
 			var value *temporal.Value
 			if choice != "someday" && choice != "now" {
-				parsed, err := ParseTemporal(raw, m.currentDate(), m.temporalContext())
+				parsed, err := ParseTemporal(raw, m.currentDate(), m.temporalContext(), m.dateOrder())
 				if err != nil {
 					return "can't parse “" + raw + "”; use a date/time, someday, or now"
 				}

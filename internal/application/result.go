@@ -90,6 +90,70 @@ type Outcome struct {
 	Project *ProjectSummary
 }
 
+// Effects is what a write changed BEYOND the one task a surface shows for it.
+//
+// Two writes do more than their response resource says. Completing a recurring
+// task does not close it: the store rolls its anchor forward and leaves it
+// open, so the returned task looks merely re-dated. Completing a parent
+// cascades DONE over its open descendants in the same undo step. Both facts
+// are the store's own, reported inside the transaction; surfacing them here
+// means an adapter translates them rather than re-deriving them by diffing two
+// reads.
+type Effects struct {
+	// Rolled is the recurrence roll, or nil when the write rolled nothing.
+	Rolled *Roll
+	// TouchedIDs is every task id the write changed, the subject first. It is
+	// set only when that list names a task OTHER than the subject, which is the
+	// case a client showing more than one row needs to hear about.
+	TouchedIDs []string
+}
+
+// Roll is one recurrence advance: the anchor date before and after. The anchor
+// is the deadline when the task has one, else its available-from date.
+type Roll struct {
+	From string
+	To   string
+}
+
+// Any reports an effect worth telling a client about.
+func (e Effects) Any() bool { return e.Rolled != nil || len(e.TouchedIDs) > 0 }
+
+// EffectsFor reports the effects of a successful write on the task id it was
+// aimed at. A refusal has none.
+func (o Outcome) EffectsFor(id string) Effects {
+	effects := Effects{}
+	if !o.Changed() {
+		return effects
+	}
+	if o.Summary.Action == store.ActionRecurrenceAdvanced && o.Summary.TaskID == id {
+		effects.Rolled = &Roll{From: o.Summary.From, To: o.Summary.To}
+	}
+	for _, touched := range o.TouchedIDs {
+		if touched != id {
+			effects.TouchedIDs = subjectFirst(o.TouchedIDs, id)
+			break
+		}
+	}
+	return effects
+}
+
+// subjectFirst is the touched list with the subject leading, in the store's
+// order otherwise.
+func subjectFirst(ids []string, subject string) []string {
+	ordered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == subject {
+			ordered = append(ordered, id)
+		}
+	}
+	for _, id := range ids {
+		if id != subject {
+			ordered = append(ordered, id)
+		}
+	}
+	return ordered
+}
+
 // The refusal predicates an adapter branches on. The store publishes OK,
 // Changed, ExitCode and FirstError; these are the remaining members of the same
 // vocabulary, named here so no surface has to compare status strings.

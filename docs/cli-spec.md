@@ -513,7 +513,8 @@ year is always respected as-is.
 Bare numeric dates with no 4-digit year (`7/15`, `7/15/26`) are ambiguous
 between month-first and day-first — `date_order = mdy` (the default, US
 month/day/year) or `date_order = dmy` in the config file, or `TASKS_DATE_ORDER`
-env, picks the reading. `tasks config` reports the resolved value.
+env, picks the reading. `tasks config` reports the resolved value, the TUI's
+date fields honor it, and the HTTP API publishes it as `/meta` `date_order`.
 
 Second-, minute-, and hour-relative phrases create a timed value from the
 current instant. Stored times have minute precision, so a result carrying
@@ -528,6 +529,16 @@ Europe/London` makes it fixed; `--floating` explicitly selects floating mode;
 `--fold later` selects the later instant during an ambiguous DST fold. A bare
 time is rejected, as are explicit wall-clock seconds, time-zone abbreviations,
 numeric offsets, unknown IANA zones, and nonexistent local times.
+
+The same three modifiers can also be written as trailing words — an IANA zone
+id, `UTC` (any case), or `floating`, then optionally `fold=earlier` / `fold=later`
+(`fri 4pm Europe/Berlin`, `2026-11-01 01:30 America/New_York fold=later`). That
+is the only spelling a single text field has, so the TUI's date fields and
+`GET /dates/parse` use it, and `due`, `schedule`, `defer`, `capture
+--due/--scheduled`, and `due --explain` accept it too. Naming the zone or the
+fold both as a flag and as a word is refused. A zone word must contain a
+letter, so a numeric date such as `7/15` is never mistaken for one. The shared
+reader is `temporal.ParseText`.
 `TASKS_TIMEZONE` overrides the config's
 `timezone`; `time_format = 12|24` affects human output only.
 If a later configuration-zone change makes a stored floating civil time
@@ -551,7 +562,8 @@ their timed and On Hold constraints still propagate. When several timed
 ancestors block a task, the latest boundary wins; an On Hold marker wins over every
 date or time. `defer <ref> <date-or-date-time>` sets availability without moving `deadline`;
 `someday <ref>` holds indefinitely; `activate <ref>` clears the task's own hold
-and any own future available-from date. `list --unavailable` (`--deferred/-D`
+and any own future available-from date (over HTTP, `POST
+/api/v1/tasks/{id}/activate` runs the same application operation). `list --unavailable` (`--deferred/-D`
 compatibility alias) reviews all effective blockers, while
 `list --someday`/`--on-hold` matches only an own indefinite marker. In the TUI,
 `Z` reveals unavailable rows and `z` accepts a date/time, `someday`, or `now`.
@@ -1189,7 +1201,8 @@ commands that emit the error object today:
 | **every `--json` command** | `unsupported_schema_version` (see the schema version gate below) |
 | `claim`, `release`, `delegate`, `undelegate`, `workref` | `conflict` (lost race / worker mismatch) |
 | `archive` | `conflict` (with `reason`: `open_descendants`, `archive_conflict`, `preview_changed`, `write_failed`) |
-| `undo`, `redo` | `empty`, `conflict` |
+| `undo`, `redo` | `empty`, `conflict` (with `reason`: `journal_conflict`, `stale_store_revision`) |
+| `history` | `unavailable` |
 | `open` | `not_found`, `ambiguous`, `unavailable` |
 
 `unsupported_schema_version` is the first row because it is the one refusal
@@ -1199,8 +1212,10 @@ three commands: the rest printed prose with empty stdout, so `tasks done
 --json` handed a caller an unparseable empty result on exactly the path it most
 needed to branch on.
 
-`recur --explain` is older and different: an unreadable schedule comes back as
-`{"input": …, "error": "<prose reason>"}`, with no `action`/`message`.
+The taskless previews — `recur --explain`, `due`/`schedule --explain`, and
+`lead --explain` — are different: unreadable input comes back as
+`{"input": …, "error": "<prose reason>"}` with exit 1 and no
+`action`/`message`, the same shape the matching HTTP preview answers with.
 Everything else — an unknown state, an unparseable date, a depth or cycle
 refusal, a blank title, a `lead` with no anchor date, a `delete` needing
 `--cascade` — exits nonzero with prose on stderr and nothing on stdout.
@@ -1243,8 +1258,8 @@ than what would be nicer.
 | `claim` | ✅ | the full canonical task resource; `conflict` error object on a lost race |
 | `release` | ✅ | `{touched: [task]}`; `conflict` error object on a worker mismatch |
 | `done` | ✅ | `{touched: [task]}` |
-| `due` | ✅ | `{touched: [task]}` |
-| `schedule` | ✅ | `{touched: [task]}` |
+| `due` | ✅ | `{touched: [task]}`; `--explain`: the `/dates/parse` payload |
+| `schedule` | ✅ | `{touched: [task]}`; `--explain`: the `/dates/parse` payload |
 | `undate` | ✅ | `{touched: [task]}` |
 | `state` | ✅ | `{touched: [task]}` |
 | `cancel` | ✅ | `{touched: [task]}` |
@@ -1255,14 +1270,15 @@ than what would be nicer.
 | `move` | ✅ | `{touched: [task]}`; the `--before` form adds `placement: {…}` |
 | `delete` | ✅ | `{deleted: [task]}` (pre-delete headlines) |
 | `recur` | ✅ | setting: `{touched: [task], next}`; reading: the preview payload; `--explain`: the engine payload |
-| `lead` | ✅ | setting: `{touched: [task]}`; reading: the window preview payload |
+| `lead` | ✅ | setting: `{touched: [task]}`; reading: the window preview payload; `--explain`: the `/lead/explain` payload |
 | `defer` | ✅ | `{touched: [task]}` |
 | `someday` | ✅ | `{touched: [task]}` |
 | `activate` | ✅ | `{touched: [task]}` |
-| `archive` | ✅ | `{roots, records, moved_ids}` — `roots` is what the human line counts, `records` the whole swept subtree (what `moved_ids` lists). Deliberately not named `archived`: the sibling `project archive --json` uses that word for its record count. Refusals: `conflict` with `reason` = `open_descendants` (carrying `blocked` + `open_descendants`), `archive_conflict` (carrying `conflicting_ids`), `preview_changed` (the store changed while the sweep was being prepared — retry), or `write_failed`; `unsupported_schema_version` on a store whose declared schema version this build does not implement. |
+| `archive` | ✅ | `{roots, records, moved_ids}` — `roots` is what the human line counts, `records` the whole swept subtree (what `moved_ids` lists). Deliberately not named `archived`: the sibling `project archive --json` uses that word for its record count. `--dry-run`: the preview `{roots, descendants, records, candidate_ids, open_descendants, blocked: [{root_id, root_title, open_ids, open_titles}], fingerprint}`, exit 0 even when roots are blocked. Refusals: `conflict` with `reason` = `open_descendants` (carrying `blocked` + `open_descendants`), `archive_conflict` (carrying `conflicting_ids`), `preview_changed` (the store changed while the sweep was being prepared — retry; under `--fingerprint` it also carries the current `fingerprint`), or `write_failed`; `unsupported_schema_version` on a store whose declared schema version this build does not implement. |
 | `repair` | ✅ | `{action: "repair", ok, status, dry_run, written, fixes: [{file, line, kind, message, id?}], blockers: [{file, line, message}]}`. `kind` is `minted_id` or `dropped_temporal_keys`; `message` restates the `check` error the fix answers, so the two reports read line for line. `id` appears only on a pass that actually wrote — a dry run and a refused pass both mint an id to prove the file would validate and then discard it. Errors: `unrepairable` (carrying the same `fixes`/`blockers` document), `unsupported_schema_version`. |
-| `undo` | ✅ | `{action: "undo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
-| `redo` | ✅ | `{action: "redo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
+| `history` | ✅ | `{undo, redo, store_revision}` — each label a string or `null`; errors `unavailable`, `unsupported_schema_version` |
+| `undo` | ✅ | `{action: "undo", label, store_revision}` (the revision after the step); errors `empty`, `conflict` (`reason` = `journal_conflict` carrying `label`, or `stale_store_revision` carrying the current `store_revision`), `unsupported_schema_version` |
+| `redo` | ✅ | `{action: "redo", label, store_revision}`; errors as `undo` |
 | `config` | ✅ | the resolved settings object |
 | `help` | ✅ | `{commands: [{name, aliases, json, json_reason}]}` — this table, as data |
 | `-p` | ❌ | Opt-out: the result is an LLM harness's free-form transcript, not a value this CLI computes; the mutations it makes are readable through the commands that do emit JSON. A leading `--json` is **rejected** (exit 1) rather than folded into the prompt. |
@@ -1275,35 +1291,53 @@ form takes no preview and is unaffected. Retrying is always the right response,
 including for the one benign case — a sweep prepared either side of local
 midnight, whose day stamp is part of the fingerprint.
 
-`archive`, `undo`, and `redo` reject stray positional arguments (`tasks archive x`
+`archive`, `history`, `undo`, and `redo` reject stray positional arguments (`tasks archive x`
 is now `usage:` + exit 1, where it used to ignore the extra word). `help` is the
 deliberate exception: it accepts anything and prints the reference, because it is
 the command you reach for when you are already unsure.
 
 **API parity.** The HTTP adapter is JSON-only, so structured output is not a
 capability that can drift there — what can drift is which capabilities it routes
-at all. `GET /api/v1/meta` advertises that honestly (`capabilities.undo`,
-`.redo`, `.archive_sweep` are `false` until the manager endpoints exist), and
-API adapter tests hold those flags to what the adapter actually dispatches.
-The CLI gaining structured `undo`/`redo`/`archive` results does not change what
-the API routes, and must not silently flip those flags.
+at all. `GET /api/v1/meta` advertises that honestly (`capabilities.projects`,
+`.undo`, `.redo`, `.archive_sweep`, `.events`, `.views`, `.activate`,
+`.patch_deltas`, `.date_parse`, `.lead_explain`, `.outline`), and API adapter
+tests hold every flag to an endpoint the adapter really dispatches.
 
-**Reconcile these names when the manager endpoints land.**
-[`docs/api/openapi.yaml`](api/openapi.yaml) already describes the unimplemented
-`/history/undo`, `/history/redo`, and `/archive-sweeps` endpoints, and it chose
-different words for the same things. Whichever adapter is written second must
-adopt the other's vocabulary deliberately rather than by accident:
+**Manager vocabulary: one set of words on both surfaces.** The history and
+archive-sweep routes landed after the CLI's `--json` documents, and they adopt
+the CLI's names; the OpenAPI's earlier drafts (`data.swept`, a bare `blocked`
+count) were retired rather than carried as aliases. Each HTTP route has a CLI
+spelling, and the documents are byte-identical where both surfaces answer one
+question (`cmd/tasks` parity tests drive both over the same files):
 
-| Concept | CLI `--json` | `openapi.yaml` |
+| Concept | CLI | HTTP |
 |---|---|---|
-| sweep result | `{roots, records, moved_ids}` | `data.swept` (records moved) |
-| blocked sweep | `error: conflict`, `reason: open_descendants` | `code: conflict`, `details.open_descendants` |
-| unreadable schema version | `error: unsupported_schema_version` | `code: unsupported_schema_version` (503) |
-| undo/redo result | `{action, label}` | `HistoryStepResponse` → `data.label` |
-| partial archive overlap | `reason: archive_conflict` | (no analogue yet) |
+| peek next undo/redo | `tasks history --json` → `{undo, redo, store_revision}` | `GET /history` → `data` is the same document |
+| guarded undo/redo | `undo --store-revision REV --json` → `{action, label, store_revision}` | `POST /history/undo` `{store_revision}` → `data: {label, store_revision}` |
+| store moved since the peek | `error: conflict`, `reason: stale_store_revision`, `store_revision` | `409 conflict`, `details.reason: stale_store_revision`, `details.store_revision` |
+| files edited outside the journal | `error: conflict`, `reason: journal_conflict`, `label` | `409 conflict`, `details.reason: journal_conflict`, `details.label` |
+| nothing to undo | `error: empty` | `409 conflict`, `details.reason: empty` |
+| sweep preview | `tasks archive --dry-run --json` | `GET /archive-preview` → `data` is the same document |
+| pinned sweep | `archive --fingerprint FP --json` → `{roots, records, moved_ids}` | `POST /archive-sweeps` `{fingerprint}` → `data` is the same document |
+| preview changed | `reason: preview_changed` (+ `fingerprint` under `--fingerprint`) | `details.reason: preview_changed`, `details.fingerprint` |
+| blocked sweep | `reason: open_descendants`, `open_descendants`, `blocked: [{root_id, root_title, open_ids, open_titles}]` | `details` with the same three members |
+| partial archive overlap | `reason: archive_conflict`, `conflicting_ids` | `details.reason: archive_conflict`, `details.conflicting_ids` |
+| rolled-back sweep | `reason: write_failed` | `503` (`unavailable`, or `store_invalid` for a validation rollback), `details.reason: write_failed` |
+| unreadable schema version | `error: unsupported_schema_version` | `503 unsupported_schema_version` |
 
-The sweep's preview pinning matches the endpoint's documented `fingerprint` →
-`409 conflict` design, which is the one place the two already agree.
+The transport differences are deliberate: HTTP spells every refusal as the
+`conflict` code with a `details.reason`, where the CLI keeps its older
+`empty` error code for an exhausted journal; and the plain CLI `undo` and
+`archive` stay unguarded, because a local caller acts on the store as it stands,
+while the HTTP routes require the precondition, because a remote caller's view
+may be stale by the time it clicks.
+
+**Change detection.** `GET /api/v1/meta` answers `If-None-Match` with `304` from
+a digest of the files alone (its opaque ETag also covers the process's
+configuration and build, so a restart under new settings never 304s), and `GET /api/v1/events` streams `store.changed`
+frames carrying the new `store_revision`; see the OpenAPI for the stream budget
+and heartbeat. The CLI has no equivalent to either: a local caller reads
+`tasks history --json` (or any read) when it wants the current revision.
 
 ## Read commands
 
@@ -1344,7 +1378,7 @@ display text to parse.
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. `--lead <span>` sets a lead-time window on the new task and needs one of the two dates (`off` is rejected here — a new task has no window to clear); a lead beside BOTH dates is refused. `propose` accepts `--lead` on the same terms. `--recur` takes every input form `recur` does (intervals, natural calendar phrases, canonical grammar — see Recurrence) and stores the canonical value; `off` is rejected here since a new task has no schedule to clear, and a recurring capture with no date is scheduled today so it has something to repeat from. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. `--link URL` is repeatable and may be followed immediately by `--label TEXT` to label that one link; the links are stored in the order given, validated exactly as `link add` validates them (shorthands expand and become the default label; a non-web or duplicate URL refuses the whole capture before anything is written), and installed in the SAME write and the same undo step as the task. A title whose LAST whitespace-separated word is already a valid `http`/`https` URL lifts that URL into a formal link and keeps the remaining words as the title; trailing sentence punctuation is peeled off the URL by the same rule link extraction uses and stays on the title; a title that is only a URL keeps its title and still gains the link, and a URL already named by `--link` is not lifted twice. |
+| `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. `--lead <span>` sets a lead-time window on the new task and needs one of the two dates (`off` is rejected here — a new task has no window to clear); a lead beside BOTH dates is refused. `propose` accepts `--lead` on the same terms. `--recur` takes every input form `recur` does (intervals, natural calendar phrases, canonical grammar — see Recurrence) and stores the canonical value; `off` is rejected here since a new task has no schedule to clear, and a recurring capture with no date is scheduled today so it has something to repeat from. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. `--link URL` is repeatable and may be followed immediately by `--label TEXT` to label that one link; the links are stored in the order given, validated exactly as `link add` validates them (shorthands expand and become the default label; a non-web or duplicate URL refuses the whole capture before anything is written), and installed in the SAME write and the same undo step as the task. A title whose LAST whitespace-separated word is already a valid `http`/`https` URL lifts that URL into a formal link and keeps the remaining words as the title; trailing sentence punctuation is peeled off the URL by the same rule link extraction uses and stays on the title; a title that is only a URL keeps its title and still gains the link, and a URL already named by `--link` is not lifted twice. Both conveniences — shorthand expansion and title-URL lifting — live in the application layer, so `POST /api/v1/tasks` (`links`, `title`) and TUI captures apply them identically. |
 | `propose "text"` | | ✅ | New inert PROPOSED task for owner review. Shares capture's dates, priority, repeatable tags/contexts/notes, repeatable `--link`/`--label` (same write, same undo, same title-URL lifting), host-context, project/under, dry-run, and JSON behavior, but rejects explicit state and recurrence. Agent-authored proposals should use `--note` for concise rationale/evidence. |
 
 ## Update (all take `<ref>`, all support `--dry-run` and `--json`)
@@ -1359,14 +1393,15 @@ display text to parse.
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. A proposal cannot transition directly to DONE or carry recurrence; use `approve`/`reject` for review intent. Entering DONE cascades to accepted open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across proposed, open, and closed live tasks so you can repair state explicitly. |
 | `due <ref> <date-or-date-time>` | `deadline`, `reschedule` | ✅ | Atomically replace `deadline`; accepts `--timezone ZONE` or `--floating`, plus `--fold earlier\|later`. Omitting time creates an all-day value and clears old time metadata. INBOX items promote to TODO. |
 | `schedule <ref> <date-or-date-time>` | | ✅ | Atomically replace `scheduled` with the same temporal flags. A future exact boundary hides the task, but this command does not clear an On Hold marker; callers that mean deferral use `defer`. Same INBOX promotion. |
+| `due --explain "<date-or-date-time>"` | `schedule --explain` | ✅ | Taskless parse/preview: no ref, no store access, the CLI twin of `GET /dates/parse`. Reads the expression with the free-text grammar (friendly date, optional wall time, optional trailing zone word and `fold=` word — see Dates) in the configured `date_order`; `--timezone`/`--floating`/`--fold` apply as they do on a write and a trailing word overrides them. Prints `<value> — <human>` (`2026-10-02 16:00 — Fri 2 Oct, 4:00p`) and exits 0; unreadable input prints the reason on stderr and exits 1. `--json` emits `{"input","date","time":{"local","timezone","fold"}\|null,"human"}` or `{"input","error"}` (exit 1) — the HTTP `data` member exactly. Rejects `--dry-run`/`--include-done`. |
 | `undate <ref>` | | ✅ | Remove `scheduled` and/or `deadline` (`--kind deadline\|scheduled` to pick one). |
 | `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the `priority` field. Resolves accepted open tasks and PROPOSED tasks so a proposal's presentation can be corrected before its lifecycle decision. |
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. Resolves accepted open tasks and PROPOSED tasks. |
-| `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. Resolves accepted open tasks and PROPOSED tasks. |
-| `link add <ref> <url> [--label TEXT]` | | ✅ | Append one formal link to an existing task — the after-the-fact path, unchanged; `capture`/`propose --link` is the same validation applied at create time. A configured shorthand expands before storage and becomes the default label. Duplicate and invalid/non-web URLs refuse. |
+| `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. Resolves accepted open tasks and PROPOSED tasks. Over HTTP: `PATCH` with `add_tags`/`remove_tags`/`add_contexts`/`remove_contexts` (the same store delta). |
+| `link add <ref> <url> [--label TEXT]` | | ✅ | Append one formal link to an existing task — the after-the-fact path, unchanged; `capture`/`propose --link` is the same validation applied at create time. A configured shorthand expands before storage and becomes the default label — the same `links.ExpandFormal` rule `PATCH formal_links` and `POST /tasks` `links` apply, and `/meta` publishes the configured templates as `link_shorthands`. Duplicate and invalid/non-web URLs refuse. |
 | `link rm <ref> <n\|url>` | | ✅ | Remove a formal link by 1-based formal-list position or exact stored URL. Body/title text is never edited; empty omits the stored field. |
 | `link set <ref> <n> --label TEXT` | | ✅ | Replace the non-empty label on a formal link selected by its 1-based formal-list position. URL, ordering, and derived body/title links are unchanged. |
-| `note <ref> "text"` | | ✅ | Append a line to the task's `body`. Resolves accepted open tasks and PROPOSED tasks. |
+| `note <ref> "text"` | | ✅ | Append a line to the task's `body`. Resolves accepted open tasks and PROPOSED tasks. Over HTTP: `PATCH` with `append_body` (the same store append). |
 | `delegate <ref> <mode> [--note <text>|--note-file <path|->]` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; re-stating the mode it already has is a clean no-op (exit 0, no undo slot, no new `at`); a claimed task refuses with a conflict naming the holder (`undelegate` first). Replacing a *human* delegation is a different delegation, so its `work_ref` is dropped. Lifecycle state is untouched except when this replaces a human delegation on a WAITING task: the WAITING that delegating to a person set is undone (to `TODO`) in the same undo step, because agent-ready work is actionable again. `--keep-state` opts out (it applies to both kinds of `delegate`). Prints `agent-ready (<mode>): <title>`, or `agent-ready (<mode>) \u2192 <STATE>: <title>` when the state moved. `--note <text>`, `--note-file <path>` and `--note-file -` (stdin) write the receiver-facing briefing in the SAME store write, so the whole three-part delegation is one undo step; `--note off`/`none`/`""` clears it, and omitting the flag leaves any existing briefing alone. |
 | `delegate <ref> --to <email> [<mode>] [--note …] [--keep-state]` | | ✅ | Hand the task to a person (`delegation: {kind: human, status: delegated, assignee}`) and move it to WAITING — the next action is outside the owner's control. `--keep-state` opts out. `<email>` must be a real address shape (a non-empty local part, exactly one `@`, and a dotted domain), so `@work` — one keystroke from the TUI's context filter — and `pat@localhost` are refused rather than silently parking the task in WAITING. Replaces an agent delegation (and vice versa): one delegation per task, and a change of kind drops the old `work_ref`. A `<mode>` positional is accepted and optional here — a person can be asked for a refine just as an agent can — and `--note`/`--note-file` behave exactly as they do for an agent delegation. The state change and the note are folded into the same undo step. Prints `delegated \u2192 <email> (<STATE>): <title>`, with the mode in the parenthesis when one was stated. |
 | `delegate <ref> --note <text|off>` | | ✅ | Rewrite (or clear) the briefing on the delegation the task ALREADY carries, without restating who holds it or in what mode — so a correction does not read as a re-delegation. Refuses an undelegated task (`task is not delegated`). It is an owner decision: unlike `workref`, a holding worker may not rewrite its own instructions. Restamps `at` on a `delegated` or `ready` marker (owner intent, which the multi-device order resolves by later `at`) but deliberately NOT on a `claimed` one, where `at` is claim time. Prints `delegation note set: <title>` or `delegation note cleared: <title>`. |
@@ -1381,6 +1416,7 @@ display text to parse.
 | `recur --explain "<schedule>"` | | ✅ | Taskless parse/preview: no ref, no store access. Prints `<canonical> — <humanized>` and the next `--count N` dates (default 5) from today. Three outcomes: understood and projected (exit 0); understood but never firing from today's anchor (dates empty, reason on stderr, exit 1); unreadable (parser reason plus the example line on stderr, exit 1). `off` reports that it clears the schedule (exit 0). `--json` emits the engine payload verbatim — `{"input","canonical","human","next":[ISO dates]}`, with `"error"` present on either failure and dates as ISO strings — on stdout, with the same exit codes. The agent-facing contract: propose a schedule, explain it, verify the dates, then commit. |
 | `lead <ref> <span>` | `leadtime`, `lead-time` | ✅ | Attach/replace the `lead` window on the task's date: hide it until `<span>` before its anchor (deadline if it has one, else available-from). `<span>` is a count and a unit, canonical (`3w`/`2d`/`1m`/`10y`/`5h`) or phrased (`3 weeks`/`a week`/`10 days`/`a quarter`/`5 hours`); `off`/`none`/`never` clears it. Input stores canonical. Unreadable input exits 1 with the parser's reason plus an example line. The five rules in Lead time are refused at write time, each naming the fix. Success prints the mutation with its window (`lead time 3w on "…" (3w before 2026-11-01)`) followed by the effective availability. `--dry-run`/`--json`/`--include-done`. |
 | `lead <ref>` | | ✅ | Read-only preview — no span argument, no write. Prints the headline, `⏳ <humanized> before (<canonical>)`, and `opens <date> (<Dow>) — <span> before <anchor>`, plus a note when `activate` already released the current occurrence. A task with no lead says so and exits 0. `--json` emits `{"id","line","title","lead","lead_human","anchor","opens","opens_at","lead_skip"}` — `opens` is the gate's local date and `opens_at` the exact instant, which is the only precise answer for a clock span. |
+| `lead --explain "<span>" [--anchor <date>]` | | ✅ | Taskless parse/preview: no ref, no store access, the CLI twin of `GET /lead/explain`. Prints `<canonical> — <humanized> before`, plus `<anchor> — opens <date>` when `--anchor` names the date the window measures from (friendly date input accepted; an hour span has no gate date). `off` reports that it clears the lead. Unreadable input prints the reason plus the example line on stderr, exit 1. `--json` emits `{"input","canonical","human","opens"}` (`canonical` null for `off`, `opens` null without an anchor or for an hour span) or `{"input","error"}` (exit 1). `--anchor` without `--explain` is refused: a task's own date is its anchor. |
 | `defer <ref> [date-or-date-time]` | `snooze` | ✅ | With a value, atomically set `scheduled` and clear the task's own indefinite marker, preserving `deadline`; accepts the same temporal flags as `schedule`. Without a value, put it On Hold indefinitely. Output and `--dry-run` report exact ancestor-aware availability. |
 | `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Make the task available now: clear its own indefinite marker and clear its own `scheduled` only when that date is in the future. On a task with a `lead` — or a **recurring** task, whose future date is its next occurrence rather than a defer — it instead releases exactly that occurrence (stamping the internal `lead_skip`) and keeps every date, so the series still has an anchor to roll from and the window re-arms on the next roll. A blocker inherited from an ancestor remains effective and is reported. Resolves unavailable open tasks. |
@@ -1564,11 +1600,12 @@ no fuzzy refs (a transport difference per design rule 7). See
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. `--json` emits `{roots, records, moved_ids}` (`roots` matches the human count; `records` is the whole swept subtree); because only a pre-sweep preview knows which records move, the JSON form pins the sweep to that preview and refuses if the store changed in between. Every refusal is an error object on stdout: `conflict` with `reason` = `open_descendants`, `archive_conflict`, `preview_changed`, or `write_failed`, or `unsupported_schema_version` on a store whose declared schema version this build does not implement. Stray positional arguments are now a usage error (exit 1). |
+| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. `--json` emits `{roots, records, moved_ids}` (`roots` matches the human count; `records` is the whole swept subtree); because only a pre-sweep preview knows which records move, the JSON form pins the sweep to that preview and refuses if the store changed in between. `--dry-run` prints that preview and writes nothing — counts, the ids that would move, every blocked root with its open children, and a `fingerprint` — and exits 0 even when roots are blocked. `--fingerprint FP` sweeps only while the preview still carries `FP` (the two-step contract of `GET /api/v1/archive-preview` + `POST /api/v1/archive-sweeps`), refusing `preview_changed` otherwise; it cannot be combined with `--dry-run`. Every refusal is an error object on stdout: `conflict` with `reason` = `open_descendants`, `archive_conflict`, `preview_changed`, or `write_failed`, or `unsupported_schema_version` on a store whose declared schema version this build does not implement. Stray positional arguments are now a usage error (exit 1). |
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. PROPOSED and accepted open tasks resolve directly; `--include-done` additionally widens to closed live tasks. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. In the TUI, `#` / Delete always confirm first (cascade confirm when the selection has descendants); same domain outcome and shared journal. |
 | `repair [--dry-run] [--json]` | `fix` | ✅ | Converge a store `check` refuses, in **one pass, one write**. It is the only command that can: every mutation validates the whole file, so the per-record repairs the code already documents cannot land while a second instance of the same defect is present, and the store is readable but unwritable (see Converging a wedged store below). Repairs, across `tasks.jsonl` **and** `archive.jsonl`: a record with no `id` (one is minted, from a pool spanning both files); an unknown key inside `scheduled_time`/`deadline_time` (dropped, the repair `Format::NESTED_FORWARD_COMPAT` documents). Anything else is a **blocker**: the pass refuses with exit 1, reports every blocker with `check`'s own wording, and writes nothing — it never leaves a partially repaired file. A file with an unparseable line or invalid UTF-8 always refuses, since writing would delete the line this build could not read. `--dry-run` reports the same plan and writes nothing. Never touches `updated` (see below). Journaled as a **repair** step, so `undo` faithfully restores the malformed bytes. `--json`: `{action, ok, status, dry_run, written, fixes: [{file, line, kind, message, id?}], blockers: [{file, line, message}]}`; a refusal is the standard error envelope with `error` = `unrepairable` or `unsupported_schema_version`. |
-| `undo [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`internal/journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--json` emits `{action: "undo", label}` naming the mutation it reverted, or an `empty`/`conflict` error object. |
-| `redo [--json]` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`, including the `{action: "redo", label}` result and its `empty`/`conflict` error objects. |
+| `history [--json]` | | ✅ | Peek at the shared journal without moving it: the label the next `undo` would revert and the next `redo` would replay (`nothing to undo` / `null` when a direction is empty), plus the `store_revision` both were read at. `--json` → `{undo, redo, store_revision}`, the same document as `GET /api/v1/history`. A label is the journal's plan: a store edited out-of-band after the journal's tip still shows one, and the step itself then refuses. |
+| `undo [--store-revision REV] [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`internal/journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--store-revision REV` pins the step to the revision `tasks history` reported, refusing (`reason: stale_store_revision`, nothing written) when any write landed since — the precondition `POST /api/v1/history/undo` requires; an empty value is a usage error. `--json` emits `{action: "undo", label, store_revision}` naming the mutation it reverted and the revision it left, or an `empty`/`conflict` error object. |
+| `redo [--store-revision REV] [--json]` | | ✅ | Replay the last undone mutation; same shared journal, conflict guard, and `--store-revision` pin as `undo`, including the `{action: "redo", label, store_revision}` result and its `empty`/`conflict` error objects. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). Deliberately has no `--json` — see the opt-out in Structured output (`--json`) coverage. |
 | `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, `delegation_modes`, tzdb version, fallback warning, prompt facts, and each setting's source. |
 | `install-merge-driver [DATA_REPO] [--json]` | | ✅ | Verify both JSONL paths select `merge=tasksjsonl`, then idempotently configure Git with the absolute installed executable. Defaults to the configured task-data repository, else the current Git repository. |

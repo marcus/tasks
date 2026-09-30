@@ -75,6 +75,18 @@ type harness struct {
 	// Empty means the built-in set, which is what every test that is not ABOUT
 	// the vocabulary wants.
 	modes []string
+	// linkShorthands, linkSystems, and dateOrder are the config a harness
+	// built with newHarnessConfigured publishes and parses with.
+	linkShorthands map[string]string
+	linkSystems    map[string]string
+	dateOrder      string
+}
+
+// newHarnessConfigured builds the default fixture with configuration applied
+// before the server is constructed.
+func newHarnessConfigured(t *testing.T, configure func(*harness)) *harness {
+	t.Helper()
+	return buildWithModes(t, t.TempDir(), fixtureOrg, fixtureArchive, "", true, nil, configure)
 }
 
 // newHarnessModes builds a server whose stores enforce a CONFIGURED delegation
@@ -116,7 +128,7 @@ func build(t *testing.T, dir, org, archive, hostContext string, seed bool) *harn
 }
 
 func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bool,
-	modes []string) *harness {
+	modes []string, configure ...func(*harness)) *harness {
 	t.Helper()
 	h := &harness{
 		modes:   modes,
@@ -127,6 +139,9 @@ func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bo
 		logs:    &strings.Builder{},
 		now:     time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
 		ids:     make(chan string, 64),
+	}
+	for _, apply := range configure {
+		apply(h)
 	}
 	if seed {
 		// The pinned id sequence belongs to the FIRST server over a store. A
@@ -174,6 +189,8 @@ func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bo
 		Factory:         func() application.Store { return newStore() },
 		TemporalContext: context,
 		HostContext:     hostContext,
+		LinkShorthands:  h.linkShorthands,
+		LinkSystems:     h.linkSystems,
 	})
 	if err != nil {
 		t.Fatalf("application: %v", err)
@@ -187,9 +204,9 @@ func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bo
 		QueryOptions:    []taskquery.Option{},
 		Port:            4747,
 		MaxDepth:        4,
-		UrgentDays:      3,
 		Timezone:        "Etc/UTC",
 		TimeFormat:      12,
+		DateOrder:       h.dateOrder,
 		Logger:          h.logs,
 		RequestIDs: func() string {
 			// Atomic because the concurrency tests drive one server from many

@@ -240,6 +240,70 @@ func (a *Application) HistoryStep(delta int) (store.HistoryOutcome, string, bool
 	return outcome, label, true
 }
 
+// HistoryPeek is the next undo and redo labels plus the revision they apply to.
+func (a *Application) HistoryPeek() (store.HistoryPeek, bool) {
+	planner, ok := a.store().(HistoryPlanner)
+	if !ok {
+		return store.HistoryPeek{}, false
+	}
+	return planner.PeekHistory(), true
+}
+
+// GuardedHistoryStep applies one undo (-1) or redo (+1) only while the store is
+// still at expectedRevision. An empty expectedRevision is unguarded.
+func (a *Application) GuardedHistoryStep(delta int, expectedRevision string) (store.HistoryStepResult, bool) {
+	planner, ok := a.store().(HistoryPlanner)
+	if !ok {
+		return store.HistoryStepResult{}, false
+	}
+	return planner.GuardedHistoryStep(delta, expectedRevision), true
+}
+
+// ArchiveSweepMatching sweeps only while the preview still carries the
+// fingerprint a caller was shown.
+//
+// A remote caller holds a fingerprint, not a preview value, so this composes
+// the two halves the store already guarantees: a fresh preview is compared
+// against the fingerprint here, and then handed to ArchiveSweep, which
+// re-plans under the exclusive lock and refuses if anything moved since that
+// preview. Together they refuse any sweep whose moved set differs from the one
+// the fingerprint names — including one prepared either side of local
+// midnight, since the day stamp is part of the fingerprint.
+func (a *Application) ArchiveSweepMatching(fingerprint string, operation *OperationContext) (ArchiveOutcome, bool) {
+	preview, supported := a.ArchivePreview(operation)
+	if !supported {
+		return ArchiveOutcome{}, false
+	}
+	if preview.Unavailable != "" {
+		return ArchiveOutcome{ArchiveResult: store.ArchiveResult{
+			Refusal: store.ArchiveUnavailable, Details: []string{preview.Unavailable},
+		}}, true
+	}
+	if preview.Fingerprint != fingerprint {
+		return ArchiveOutcome{ArchiveResult: store.ArchiveResult{
+			Refusal: store.ArchivePreviewChanged, Preview: preview,
+		}}, true
+	}
+	return a.ArchiveSweep(&preview, operation)
+}
+
+// StoreRevision is the current global store revision, as cheaply as the store
+// can answer it. It says nothing about whether the store is valid.
+func (a *Application) StoreRevision() (string, error) {
+	target := a.store()
+	if reader, ok := target.(RevisionReader); ok {
+		return reader.StoreRevision()
+	}
+	checked, err := target.CheckedReadSnapshot()
+	if err != nil {
+		return "", err
+	}
+	if checked.StoreRevision == "" {
+		return "", errors.New("task store unavailable")
+	}
+	return checked.StoreRevision, nil
+}
+
 // UpdateTask applies several field changes to one task ATOMICALLY, guarded by
 // the revision the caller read.
 //
@@ -259,6 +323,46 @@ func (a *Application) UpdateTask(id string, changes []store.Change, label string
 		ID: id, Changes: changes, ExpectedRevision: revision, HistoryLabel: label,
 		Today: a.today(operation), Context: a.contextFor(operation),
 	})}, true
+}
+
+// ActivateCommand makes one task available now — `tasks activate`, the TUI's
+// `z now`, and `POST /tasks/{id}/activate`.
+//
+// ExpectedRevision is the whole-task revision the caller read. The CLI reads
+// its own just before the write; HTTP carries the client's If-Match. Empty
+// means no precondition, which only a caller with its own guard should send.
+type ActivateCommand struct {
+	ID               string
+	ExpectedRevision string
+	// HistoryLabel names the undo step; empty takes the store's
+	// "activate: <title>", which is the CLI's spelling.
+	HistoryLabel string
+}
+
+// ActivateTask releases a task's own hold in one write and one undo step: the
+// indefinite marker goes, a FUTURE available-from date goes with it, and a past
+// one stays, because it is history rather than a gate. A lead or recurring task
+// keeps every date and records a one-occurrence release instead (`lead_skip`),
+// since its anchor is what the next window is measured from.
+//
+// All of that is the store's `activate` field. This operation exists so every
+// surface names the same one, rather than each composing its own approximation
+// out of `deferred` and `scheduled` — which drops a past start date and cannot
+// express the lead release at all.
+func (a *Application) ActivateTask(command ActivateCommand, operation *OperationContext) Outcome {
+	if trimmed(command.ID) == "" {
+		return invalid("task id is required")
+	}
+	placer, ok := a.store().(Placer)
+	if !ok {
+		return unsupported("activate a task")
+	}
+	return Outcome{MutationResult: placer.ApplyChangeset(store.Changeset{
+		ID:               command.ID,
+		Changes:          []store.Change{{Field: store.FieldActivate, Value: store.BoolValue(true)}},
+		ExpectedRevision: command.ExpectedRevision, HistoryLabel: command.HistoryLabel,
+		Today: a.today(operation), Context: a.contextFor(operation),
+	})}
 }
 
 // MoveTask relocates one subtree, guarded by the revision the caller read.

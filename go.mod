@@ -6,6 +6,8 @@ require (
 	charm.land/bubbletea/v2 v2.0.7
 	github.com/mattn/go-isatty v0.0.20
 	github.com/rivo/uniseg v0.4.7
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -23,4 +25,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 )

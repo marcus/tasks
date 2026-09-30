@@ -367,3 +367,27 @@ func TestAMalformedProposalDecisionIsARefusalNotAPanic(t *testing.T) {
 		t.Fatalf("a malformed decision must not reach the store: %+v", script.calls)
 	}
 }
+
+// The Inbox and the Projects heading hold the file together, so every surface
+// that reaches them — the TUI's outline rows, an HTTP section action — gets the
+// same conflict, before any store call. Reopen is the way back and stays open.
+func TestStructuralSectionsRefuseRenameCloseAndArchiveBeforeAnyStoreCall(t *testing.T) {
+	script := &scriptedStore{}
+	h := projectHarness(t, script, projectsFixture)
+
+	for _, id := range []string{"cccc0001", "cccc0002"} {
+		for name, result := range map[string]Outcome{
+			"rename":   h.app.RenameProject(id, "Elsewhere", nil),
+			"complete": h.app.CompleteProject(id, nil),
+			"drop":     h.app.DropProject(id, nil),
+			"archive":  h.app.ArchiveProject(id, nil),
+		} {
+			if !result.Conflict() || result.FirstError() == "" {
+				t.Errorf("%s %s = %q %v, want a conflict", name, id, result.Status, result.Errors)
+			}
+		}
+	}
+	if len(script.calls) != 0 {
+		t.Fatalf("a structural refusal reached the store: %+v", script.calls)
+	}
+}

@@ -52,7 +52,7 @@ type Changeset struct {
 // THIS sequence rather than in the caller's, and a field outside the list sorts
 // last by name so the order is still total.
 var fieldOrder = []PatchField{
-	FieldTitle, FieldPriority, FieldLinks, FieldBody,
+	FieldTitle, FieldPriority, FieldLinks, FieldBody, FieldBodyAppend,
 	FieldContexts, FieldTags, FieldDeferred, FieldTagDelta,
 	FieldActivate,
 	FieldScheduled, FieldDeadline, FieldDateClear,
@@ -136,6 +136,9 @@ func validateChangeset(changeset Changeset, ordered []Change) []string {
 	}
 	if seen[FieldDateClear] && (seen[FieldScheduled] || seen[FieldDeadline]) {
 		errors = append(errors, "date_clear cannot be combined with scheduled or deadline")
+	}
+	if seen[FieldBodyAppend] && seen[FieldBody] {
+		errors = append(errors, "body_append cannot be combined with body")
 	}
 	if seen[FieldActivate] && (seen[FieldDeferred] || seen[FieldScheduled]) {
 		errors = append(errors, "activate cannot be combined with deferred or scheduled")
@@ -425,12 +428,49 @@ func (s *Store) ApplyChangeset(changeset Changeset) MutationResult {
 }
 
 // changesetLabel is `changeset_history_label`: the fields, in applied order.
+//
+// A lone verb-shaped change — activate, a tag delta, a note append, a date
+// clear — is the operation a CLI verb performs, so its default names it the
+// way that verb labels its own undo step (`tasks activate`, `tasks tag`,
+// `tasks note`, `tasks undate`). That keeps the undo entry identical whichever
+// surface asked. In a mixed edit those same operations are listed by the
+// user-facing name, never by the internal field.
 func changesetLabel(ordered []Change, title string) string {
+	if len(ordered) == 1 {
+		change := ordered[0]
+		switch change.Field {
+		case FieldActivate:
+			return "activate: " + title
+		case FieldTagDelta:
+			return "tags: " + title
+		case FieldBodyAppend:
+			return "note: " + title
+		case FieldDateClear:
+			if kind := change.Value.Text(); !change.Value.IsNone() && kind != "" {
+				return "remove " + kind + ": " + title
+			}
+			return "remove dates: " + title
+		}
+	}
 	names := make([]string, 0, len(ordered))
 	for _, change := range ordered {
-		names = append(names, string(change.Field))
+		names = append(names, changeLabelName(change.Field))
 	}
 	return "edit " + strings.Join(names, ", ") + ": " + title
+}
+
+// changeLabelName is how an edit label names one field: its own name, except
+// for the delta operations whose field names are internal.
+func changeLabelName(field PatchField) string {
+	switch field {
+	case FieldTagDelta:
+		return "tags"
+	case FieldBodyAppend:
+		return "note"
+	case FieldDateClear:
+		return "dates"
+	}
+	return string(field)
 }
 
 func appendUnique(values []string, extra ...string) []string {

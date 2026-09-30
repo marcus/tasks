@@ -117,24 +117,31 @@ func (t *treeIndex) section(id string) (record.Record, bool) {
 	return current, true
 }
 
-// ancestorIDs is `ancestor_ids`: every id above this record, outermost first.
-func (t *treeIndex) ancestorIDs(id string) []string {
-	ancestors := []string{}
+// taskDepth is how many TASK ancestors sit above this record. Sections do not
+// count, however deeply they nest: a top-level task in a project (a section
+// under "Projects") is depth 0 exactly like a top-level Inbox task, which is
+// what `parent_id` already implies.
+func (t *treeIndex) taskDepth(id string) int {
+	depth := 0
 	current, found := t.byID[id]
 	if !found {
-		return ancestors
+		return 0
 	}
-	current, found = t.byID[current.String("parent")]
-	for found {
-		if value := current.String("id"); value != "" {
-			ancestors = append(ancestors, value)
+	seen := map[string]bool{id: true}
+	for {
+		parentID := current.String("parent")
+		if parentID == "" || seen[parentID] {
+			return depth
 		}
-		current, found = t.byID[current.String("parent")]
+		seen[parentID] = true
+		current, found = t.byID[parentID]
+		if !found {
+			return depth
+		}
+		if current.String("type") == "task" {
+			depth++
+		}
 	}
-	for left, right := 0, len(ancestors)-1; left < right; left, right = left+1, right-1 {
-		ancestors[left], ancestors[right] = ancestors[right], ancestors[left]
-	}
-	return ancestors
 }
 
 // childCount is `child_ids_for(...).length`: direct TASK children only.
@@ -204,12 +211,7 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 	if item.HasParent && item.Parent != sectionID {
 		parentID = item.Parent
 	}
-	depth := 0
-	for _, ancestor := range index.ancestorIDs(item.ID) {
-		if ancestor != sectionID {
-			depth++
-		}
-	}
+	depth := index.taskDepth(item.ID)
 
 	scheduled, hasScheduled := c.queries.ScheduledValue(item)
 	deadline, hasDeadline := c.queries.DeadlineValue(item)
@@ -245,6 +247,12 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 	} else {
 		w.Str(availability.AvailableAt.UTC().Format(instantLayout))
 	}
+	w.Key("quadrant")
+	if quadrant, ok := c.queries.QuadrantFor(item); ok {
+		w.Str(quadrant)
+	} else {
+		w.Null()
+	}
 	w.KeyStrOrNull("recurrence", item.Recur)
 	w.Key("recurrence_human")
 	if human := recur.Humanize(item.Recur); item.Recur != "" && human != nil {
@@ -273,11 +281,21 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 	}
 	w.Key("body")
 	w.Strings(c.queries.Body(item))
+	created, _ := c.queries.Created(item)
+	w.KeyStrOrNull("created", created)
+	w.Key("updated")
+	if updated, ok := c.queries.UpdatedAt(item); ok {
+		w.Str(updated.Format(instantLayout))
+	} else {
+		w.Null()
+	}
 	w.KeyStrOrNull("closed", item.Closed)
 	// The declined-proposal marker: present only on a CANCELLED task that was
 	// rejected at review, so a client can tell a decline from a cancellation.
 	w.KeyStrOrNull("rejected", item.Rejected)
 	w.KeyBool("archived", item.Source == store.SourceArchive)
+	archivedOn, _ := c.queries.ArchivedOn(item)
+	w.KeyStrOrNull("archived_on", archivedOn)
 	w.Key("project")
 	if project, ok := c.queries.Project(item); ok {
 		w.Str(project)
@@ -316,6 +334,7 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 	w.EndArray()
 	w.Key("delegation")
 	writeDelegation(w, item.Delegation)
+	w.KeyBool("agent_ready", c.queries.AgentReady(item))
 	w.EndObject()
 }
 
@@ -431,13 +450,33 @@ func delegationText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// writeSection is Representation.section.
-func writeSection(w *jsonout.Writer, parsed record.Record) {
+// writeSection is Representation.section: the record's own three members,
+// then its role, note and lifecycle. Every member is always present, null when
+// absent, so the schema can be strict.
+func writeSection(w *jsonout.Writer, section taskquery.SectionInfo) {
 	w.BeginObject()
-	w.KeyStrOrNull("id", parsed.String("id"))
-	w.KeyStr("title", parsed.String("title"))
-	w.KeyStrOrNull("parent_id", parsed.String("parent"))
+	writeSectionMembers(w, section)
 	w.EndObject()
+}
+
+func writeSectionMembers(w *jsonout.Writer, section taskquery.SectionInfo) {
+	w.KeyStrOrNull("id", section.ID)
+	w.KeyStr("title", section.Title)
+	w.KeyStrOrNull("parent_id", section.ParentID)
+	w.KeyStr("kind", section.Kind)
+	w.Key("body")
+	if section.HasBody {
+		w.Str(section.Body)
+	} else {
+		w.Null()
+	}
+	w.KeyStrOrNull("state", section.State)
+	w.Key("closed")
+	if section.HasClosed {
+		w.Str(section.Closed)
+	} else {
+		w.Null()
+	}
 }
 
 // writeProject is Representation.project: every field present with an explicit

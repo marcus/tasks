@@ -83,6 +83,11 @@ type CreateCommand struct {
 	// caller building a command with a struct literal gets the host context
 	// without having to know it must ask for it.
 	SkipHostContext bool
+
+	// prepared marks a command PrepareCreateTask already returned, so a second
+	// preparation — a dry-run preview followed by the create — cannot lift a
+	// second trailing URL out of a title the first pass already shortened.
+	prepared bool
 }
 
 // clone is the copy the application takes when it accepts a command, so a

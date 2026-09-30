@@ -123,6 +123,8 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"  state     mv <ref> <STATE>       any state transition" + "\n" +
 	"  due          <ref> <date/time>   set/replace DEADLINE   (aka deadline, reschedule)" + "\n" +
 	"  schedule     <ref> <date/time>   set/replace Available from (SCHEDULED)" + "\n" +
+	"  due|schedule --explain \"<date>\" parse/preview a date, no task needed" + "\n" +
+	"                                   (trailing zone/floating/fold=later words ok)" + "\n" +
 	"  undate       <ref> [--kind deadline|scheduled]   remove date stamp(s)" + "\n" +
 	"  priority pri <ref> <A|B|C|none>  set/clear priority (incl. PROPOSED)" + "\n" +
 	"  retitle rename <ref> \"title\"     replace title (incl. PROPOSED)" + "\n" +
@@ -150,6 +152,7 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"                                   1m · 5h · \"a week\" · off (anchor = deadline" + "\n" +
 	"                                   if it has one, else Available from)" + "\n" +
 	"                 <ref>              read-only: the window and when it opens" + "\n" +
+	"                 --explain \"<span>\" [--anchor <date>]  preview, no task needed" + "\n" +
 	"  defer   snooze <ref> [date/time] defer until exact value; omitted means On Hold" + "\n" +
 	"  someday        <ref>             put on indefinite hold (Someday/Maybe)" + "\n" +
 	"  activate       <ref>             make available now (undefer, resume)" + "\n" +
@@ -197,10 +200,13 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"" + "\n" +
 	"Lifecycle:" + "\n" +
 	"  archive   x              sweep DONE/CANCELLED to archive.jsonl" + "\n" +
-	"                           (--json: {roots, records, moved_ids})" + "\n" +
+	"                           (--json: {roots, records, moved_ids};" + "\n" +
+	"                           --dry-run previews it, blocked roots included)" + "\n" +
+	"  history                  peek the next undo/redo labels and store revision" + "\n" +
 	"  undo                     revert the last mutation (shared with the TUI)" + "\n" +
 	"  redo                     replay the last undone mutation" + "\n" +
-	"                           (both --json: {action, label})" + "\n" +
+	"                           (both --json: {action, label, store_revision};" + "\n" +
+	"                           --store-revision REV refuses if the store moved)" + "\n" +
 	"  config                   show resolved file paths and their sources" + "\n" +
 	"  install-merge-driver [DATA_REPO]   configure Git's tasksjsonl driver" + "\n" +
 	"  version                  print build version (--json available)" + "\n" +
@@ -293,6 +299,7 @@ var helpCommands = []helpCommand{
 	{name: "activate", aliases: []string{"undefer", "resume"}, json: true, gate: true},
 	{name: "archive", aliases: []string{"x"}, json: true, gate: true},
 	{name: "repair", aliases: []string{"fix"}, json: true, gate: true},
+	{name: "history", json: true, gate: true},
 	{name: "undo", json: true, gate: true},
 	{name: "redo", json: true, gate: true},
 	{name: "config", json: true, gateReason: "It reports where the store IS, never what it contains. Finding the file is a precondition for fixing a version skew, so it must answer for a store no other command will touch."},

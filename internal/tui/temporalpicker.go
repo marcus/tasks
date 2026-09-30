@@ -58,6 +58,9 @@ type TemporalInput struct {
 	*termform.DateInput
 	context temporal.Context
 	today   func() temporal.Date
+	// parse is the field's own Parse hook, so the control reads the buffer
+	// with exactly the grammar (and date order) the field commits with.
+	parse func(string, temporal.Date) (any, error)
 
 	open bool
 	row  int
@@ -80,7 +83,7 @@ func NewTemporalInput(base termform.Base, hooks termform.DateHooks, today func()
 
 	field := &TemporalInput{
 		DateInput: termform.NewDateInput(base, hooks, today, suggestions, true),
-		context:   context, today: today, suggestions: suggestions,
+		context:   context, today: today, suggestions: suggestions, parse: hooks.Parse,
 	}
 	return field
 }
@@ -478,7 +481,10 @@ func (t *TemporalInput) workingValue(value any) *temporal.Value {
 		held := *parsed
 		return &held
 	}
-	if parsed, err := ParseTemporal(t.Text(), t.today(), t.context); err == nil {
+	if t.parse == nil {
+		return &temporal.Value{Date: t.today()}
+	}
+	if parsed, err := t.parse(t.Text(), t.today()); err == nil {
 		if typed, ok := parsed.(*temporal.Value); ok && typed != nil {
 			held := *typed
 			return &held

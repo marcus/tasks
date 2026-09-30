@@ -217,7 +217,7 @@ func (s *Store) decideProposal(id, action string, notes []string,
 			// reaching here. This guard is what keeps that a REFUSAL rather than
 			// a silent lie if the preflight is ever narrowed: the alternative is
 			// committing a rolled-forward, still-open task and reporting DONE.
-			if finished.summary.Action == "recurrence_advanced" {
+			if finished.summary.Action == ActionRecurrenceAdvanced {
 				result = MutationResult{Status: MutationInvalid,
 					Errors: []string{"remove recurrence before approving as done"}}
 				return nil

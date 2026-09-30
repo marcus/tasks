@@ -20,11 +20,11 @@ import (
 const schemaVersion = check.Version
 
 // validateCreateBody is App#validate_create_body!.
-func validateCreateBody(body *jsonObject) error {
+func validateCreateBody(body *jsonObject, expand linkExpander) error {
 	if !body.has("title") {
 		return validationError(reason("title", "is required"))
 	}
-	if err := validateCommonBody(body, true); err != nil {
+	if err := validateCommonBody(body, true, expand); err != nil {
 		return err
 	}
 	hasProject := body.has("project") && !body.isNull("project")
@@ -36,8 +36,9 @@ func validateCreateBody(body *jsonObject) error {
 }
 
 // validatePatchBody is App#validate_patch_body!.
-func validatePatchBody(body *jsonObject, queries *taskquery.Queries, current store.Item) error {
-	if err := validateCommonBody(body, false); err != nil {
+func validatePatchBody(body *jsonObject, queries *taskquery.Queries, current store.Item,
+	expand linkExpander) error {
+	if err := validateCommonBody(body, false, expand); err != nil {
 		return err
 	}
 	for _, field := range []string{"scheduled", "deadline"} {
@@ -94,7 +95,7 @@ func validatePlacement(body *jsonObject) error {
 
 // validateCommonBody is App#validate_common_body!, in the same order, because
 // the FIRST refusal is the one a client sees.
-func validateCommonBody(body *jsonObject, create bool) error {
+func validateCommonBody(body *jsonObject, create bool, expand linkExpander) error {
 	if body.has("title") {
 		title, isText := body.text("title")
 		if !isText || strings.TrimSpace(title) == "" {
@@ -155,7 +156,7 @@ func validateCommonBody(body *jsonObject, create bool) error {
 		if !body.has(field) {
 			continue
 		}
-		if _, err := formalLinks(body.raw(field)); err != nil {
+		if _, err := formalLinks(body.raw(field), expand); err != nil {
 			return validationError(reason(field, err.Error()))
 		}
 	}
@@ -350,7 +351,7 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 				Field: store.FieldBody, Value: store.TextValue(normalizeBody(body, key)),
 			})
 		case "formal_links":
-			values, _ := formalLinks(body.raw(key))
+			values, _ := formalLinks(body.raw(key), s.expandLink)
 			changes = append(changes, store.Change{Field: store.FieldLinks, Value: store.LinksValue(values)})
 		case "recurrence":
 			value := store.NoValue()
@@ -389,8 +390,12 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 		}
 	}
 
+	// The delta members fold into the store's own delta ops, once each.
+	changes = append(changes, deltaChanges(body)...)
+
 	// The two temporal pairs are folded LAST and once each: a request may name
 	// the date, the time, or both, and all three produce one field change.
+	dated := []store.Change{}
 	for _, field := range []string{"scheduled", "deadline"} {
 		if !body.has(field) && !body.has(field+"_time") {
 			continue
@@ -403,12 +408,61 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 		if field == "deadline" {
 			patchField = store.FieldDeadline
 		}
-		changes = append(changes, store.Change{Field: patchField, Value: value})
+		dated = append(dated, store.Change{Field: patchField, Value: value})
 	}
-	return changes, nil
+	return append(changes, dateClearOf(dated, current)...), nil
 }
 
-func formalLinks(raw json.RawMessage) ([]links.FormalLink, error) {
+// dateClearOf routes a request that only CLEARS dates through the store's one
+// date-clear operation — `tasks undate` — rather than a null per field.
+//
+// The bytes are the same either way: both drop the date, its time, and any
+// early lead release, and both retire a recurrence or lead whose last anchor
+// went. Taking one path is what keeps the two surfaces from drifting if that
+// ever changes. The operation refuses a date that is not there, and PATCH is
+// declarative — nulling an absent date is a no-op, not an error — so only the
+// dates the task CARRIES are cleared through it; the If-Match makes that the
+// state the write finds. A request that also SETS a date keeps the per-field
+// changes, because the store will not mix the two in one changeset.
+func dateClearOf(dated []store.Change, current store.Item) []store.Change {
+	clearing := []string{}
+	for _, change := range dated {
+		if !change.Value.IsNone() {
+			return dated
+		}
+		carried := current.Scheduled != ""
+		kind := "scheduled"
+		if change.Field == store.FieldDeadline {
+			carried, kind = current.Deadline != "", "deadline"
+		}
+		if carried {
+			clearing = append(clearing, kind)
+		}
+	}
+	switch len(clearing) {
+	case 0:
+		return dated
+	case 1:
+		return []store.Change{{Field: store.FieldDateClear, Value: store.TextValue(clearing[0])}}
+	}
+	return []store.Change{{Field: store.FieldDateClear, Value: store.NoValue()}}
+}
+
+// linkExpander resolves one formal-link `url` input — a web URL, or a configured
+// shorthand such as `jira:OPS-1234` — the way application.ExpandFormalLink does.
+type linkExpander func(string) (links.FormalLink, bool)
+
+// expandLink is the server's expander: the application's, so the shorthands an
+// HTTP write expands through are exactly the ones `tasks link add` uses.
+func (s *Server) expandLink(raw string) (links.FormalLink, bool) {
+	return s.options.App.ExpandFormalLink(raw)
+}
+
+// formalLinks parses an array of `{url, label?}` entries. Each `url` is expanded
+// first, so a shorthand stores its URL (with the token as the default label),
+// and the duplicate check compares what would be STORED: `jira:OPS-1` and the
+// URL it expands to are one link.
+func formalLinks(raw json.RawMessage, expand linkExpander) ([]links.FormalLink, error) {
 	var entries []json.RawMessage
 	if json.Unmarshal(raw, &entries) != nil {
 		return nil, fmt.Errorf("must be an array")
@@ -426,11 +480,13 @@ func formalLinks(raw json.RawMessage) ([]links.FormalLink, error) {
 		if err := rejectUnknownFields(object, []string{"url", "label"}); err != nil {
 			return nil, fmt.Errorf("entry %d must contain only url and label", index+1)
 		}
-		linkURL, ok := object.text("url")
-		if !ok || !links.ValidFormalURL(linkURL) {
-			return nil, fmt.Errorf("entry %d url must be an http or https URL with a host", index+1)
+		input, isText := object.text("url")
+		expanded, ok := expand(input)
+		if !isText || !ok {
+			return nil, fmt.Errorf(
+				"entry %d url must be an http or https URL with a host, or a configured shorthand", index+1)
 		}
-		label := ""
+		linkURL, label := expanded.URL, expanded.Label
 		if object.has("label") {
 			if object.isNull("label") {
 				return nil, fmt.Errorf("entry %d label must be non-empty text or omitted", index+1)

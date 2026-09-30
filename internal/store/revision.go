@@ -110,6 +110,14 @@ func taskRevision(records []record.Record, index int, siblings map[string][]json
 		}
 		pairs = append(pairs, jsonArray(jsonString(field), value))
 	}
+	// The stored formal links are an own field too: without them, two clients
+	// replacing the list under the same If-Match would both succeed and the
+	// second would silently drop the first one's links.
+	links, err := linksRevisionValue(fieldRaw(parsed, "links"))
+	if err != nil {
+		return "", err
+	}
+	pairs = append(pairs, jsonArray(jsonString("links"), links))
 	own := semanticDigest(jsonArray(pairs...))
 
 	location, err := locationFingerprint(records, index, siblings)
@@ -302,6 +310,21 @@ func revisionValue(raw json.RawMessage) (json.RawMessage, error) {
 	default:
 		return canonical(trimmed)
 	}
+}
+
+// linksRevisionValue is the stored formal-link list in revision spelling. An
+// absent, null, or empty list are one value — emission omits an empty list, so
+// a write that clears the links must not read back as a different revision
+// from a task that never had any.
+func linksRevisionValue(raw json.RawMessage) (json.RawMessage, error) {
+	value, err := revisionValue(raw)
+	if err != nil {
+		return nil, err
+	}
+	if string(value) == "null" {
+		return json.RawMessage("[]"), nil
+	}
+	return value, nil
 }
 
 // dateValue is `revision_value(to_date(...))`: a parseable ISO date in its

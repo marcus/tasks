@@ -74,6 +74,8 @@ func NewRuntime(options RuntimeOptions) (*Model, error) {
 		TemporalContext: temporalContext,
 		HostContext:     paths.HostContext,
 		QueryOptions:    []taskquery.Option{taskquery.WithLinkConfig(paths.Links, paths.LinkSystems)},
+		LinkShorthands:  paths.Links,
+		LinkSystems:     paths.LinkSystems,
 	})
 	if err != nil {
 		return nil, err

@@ -71,13 +71,18 @@ type Options struct {
 
 	Port       int
 	MaxDepth   int
-	UrgentDays int
 	Timezone   string
 	TimeFormat int
+	// DateOrder is the configured reading of an ambiguous numeric date, `mdy`
+	// or `dmy`. The date parse preview honors it and /meta publishes it.
+	DateOrder string
 
-	// QueryOptions are the link shorthands and systems every read model built
-	// here is configured with, so an HTTP resource and `tasks links` classify a
-	// URL the same way.
+	// QueryOptions are the link configuration and `urgent_days` window every
+	// read model built here is configured with, so an HTTP resource and
+	// `tasks links` classify a URL the same way. They are also the ONE source
+	// of `urgent_days`: /meta publishes the window they resolve to, and the
+	// views classify through the read model's own. Read must be built with
+	// the same options.
 	QueryOptions []taskquery.Option
 
 	// Logger receives one JSON line per request. nil disables logging.
@@ -87,6 +92,12 @@ type Options struct {
 	// log line and the error envelope.
 	RequestIDs func() string
 	Clock      func() time.Time
+
+	// EventStreamLimit caps concurrently open /events streams; zero means the
+	// default. EventPollInterval and EventHeartbeat pace each open stream.
+	EventStreamLimit  int
+	EventPollInterval time.Duration
+	EventHeartbeat    time.Duration
 }
 
 // Server is the http.Handler. Everything it holds is immutable after
@@ -106,6 +117,12 @@ type Server struct {
 	// against the concurrency tests; the mutex is the whole fix, and it is held
 	// only around the write.
 	logMutex sync.Mutex
+
+	// streams is the /events budget and shutdown signal; see events.go.
+	streams *eventStreams
+
+	// urgentDays is the window QueryOptions resolve to, for /meta.
+	urgentDays int
 }
 
 // New validates the options and builds a server.
@@ -125,6 +142,9 @@ func New(options Options) (*Server, error) {
 	if options.TimeFormat == 0 {
 		options.TimeFormat = 12
 	}
+	// Normalized through the parser's own reading, so /meta can never publish
+	// a spelling the parser would read as something else.
+	options.DateOrder = temporal.OrderNamed(options.DateOrder).String()
 	if options.RequestIDs == nil {
 		options.RequestIDs = defaultRequestID
 	}
@@ -146,7 +166,11 @@ func New(options Options) (*Server, error) {
 	for _, host := range hosts {
 		origins = append(origins, "http://"+host)
 	}
-	return &Server{options: options, allowedHosts: hosts, allowedOrigins: origins}, nil
+	return &Server{
+		options: options, allowedHosts: hosts, allowedOrigins: origins,
+		streams:    newEventStreams(options.EventStreamLimit),
+		urgentDays: taskquery.ResolveUrgentDays(options.QueryOptions...),
+	}, nil
 }
 
 func defaultRequestID() string {
@@ -170,6 +194,11 @@ type response struct {
 
 func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	requestID := s.options.RequestIDs()
+	if request.Method == http.MethodGet && request.URL.Path == eventsPath {
+		// A stream is not one shaped answer, so it writes for itself.
+		s.serveEvents(writer, request, requestID)
+		return
+	}
 	started := s.options.Clock()
 	route := routeName(request.URL.Path)
 
@@ -216,7 +245,11 @@ func (s *Server) write(writer http.ResponseWriter, answer response, requestID st
 	}
 	if answer.body == nil {
 		header.Del("content-type")
-		header.Set("content-length", "0")
+		// A 304 describes the representation it stands in for, so it must not
+		// claim that representation is empty.
+		if answer.status != http.StatusNotModified {
+			header.Set("content-length", "0")
+		}
 		writer.WriteHeader(answer.status)
 		return
 	}
@@ -283,6 +316,20 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		return s.createTask(request, requestID)
 	case method == http.MethodGet && path == explainPath:
 		return s.explainRecurrence(request)
+	case method == http.MethodGet && path == "/api/v1/history":
+		return s.getHistory(request)
+	case method == http.MethodPost && path == "/api/v1/history/undo":
+		return s.historyStep(request, -1, "undo")
+	case method == http.MethodPost && path == "/api/v1/history/redo":
+		return s.historyStep(request, 1, "redo")
+	case method == http.MethodGet && path == "/api/v1/archive-preview":
+		return s.archivePreview(request, requestID)
+	case method == http.MethodPost && path == "/api/v1/archive-sweeps":
+		return s.archiveSweep(request, requestID)
+	case method == http.MethodGet && path == datesParsePath:
+		return s.parseDate(request)
+	case method == http.MethodGet && path == leadExplainPath:
+		return s.explainLead(request)
 	}
 
 	if match := taskPath.FindStringSubmatch(path); match != nil {
@@ -308,6 +355,14 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		return s.decideProposal(request, id, match[2], requestID)
 	}
 
+	if match := activatePath.FindStringSubmatch(path); match != nil && method == http.MethodPost {
+		id, err := validTaskID(match[1])
+		if err != nil {
+			return response{}, err
+		}
+		return s.activateTask(request, id, requestID)
+	}
+
 	if match := delegationPath.FindStringSubmatch(path); match != nil && method == http.MethodPost {
 		id, err := validTaskID(match[1])
 		if err != nil {
@@ -330,6 +385,10 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 			return response{}, err
 		}
 		return s.putDelegationNote(request, id, requestID)
+	}
+
+	if match := viewPath.FindStringSubmatch(path); match != nil && method == http.MethodGet {
+		return s.view(request, match[1])
 	}
 
 	switch {
@@ -371,7 +430,15 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		}
 	}
 
-	return response{}, errorOf(404, "not_found")
+	return response{}, unknownRoute()
+}
+
+// unknownRoute is the answer for a method and path nothing here serves. It
+// shares the not_found code with a missing task, but not its sentence: "No
+// task with that id" would send a client hunting for a bad id when the
+// endpoint itself is what is missing.
+func unknownRoute() error {
+	return errorWith(404, "not_found", "No endpoint matches that method and path.")
 }
 
 var (
@@ -379,6 +446,7 @@ var (
 	decisionPath   = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/(approve|reject|unreject)$`)
 	delegationPath = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/(delegate|undelegate|claim|release)$`)
 	workRefPath    = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/work_ref$`)
+	activatePath   = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/activate$`)
 	// The briefing has its own route for the same reason work_ref does: an
 	// owner correcting instructions should not have to restate the delegation.
 	delegationNotePath = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/delegation_note$`)
@@ -396,6 +464,9 @@ func validTaskID(value string) (string, error) {
 var literalRoutes = map[string]bool{
 	"/healthz": true, "/readyz": true, "/api/v1/meta": true, "/api/v1/sections": true,
 	"/api/v1/tasks": true, "/api/v1/projects": true, explainPath: true,
+	"/api/v1/history": true, "/api/v1/history/undo": true, "/api/v1/history/redo": true,
+	"/api/v1/archive-preview": true, "/api/v1/archive-sweeps": true, eventsPath: true,
+	datesParsePath: true, leadExplainPath: true,
 }
 
 // routeName is App#route_name: the templated path a log line names, so a log
@@ -425,11 +496,14 @@ func routeName(path string) string {
 	if projectRoute.MatchString(path) {
 		return "/api/v1/projects/{id}"
 	}
+	if viewPath.MatchString(path) {
+		return "/api/v1/views/{name}"
+	}
 	return "unmatched"
 }
 
 var (
-	actionRoute   = regexp.MustCompile(`^/api/v1/tasks/[^/]+/(delegate|undelegate|claim|release|work_ref|delegation_note)$`)
+	actionRoute   = regexp.MustCompile(`^/api/v1/tasks/[^/]+/(delegate|undelegate|claim|release|work_ref|delegation_note|activate)$`)
 	completeRoute = regexp.MustCompile(`^/api/v1/projects/[^/]+/complete$`)
 	dropRoute     = regexp.MustCompile(`^/api/v1/projects/[^/]+/drop$`)
 	reopenRoute   = regexp.MustCompile(`^/api/v1/projects/[^/]+/reopen$`)

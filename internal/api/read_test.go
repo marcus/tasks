@@ -50,14 +50,18 @@ func TestHealthReadinessMetaAndSections(t *testing.T) {
 	}
 	capabilities, _ := meta.dig("data", "capabilities").(map[string]any)
 	for name, want := range map[string]bool{
-		"projects": true, "undo": false, "redo": false, "archive_sweep": false, "events": false,
+		"projects": true, "undo": true, "redo": true, "archive_sweep": true, "events": true,
+		"views": true, "activate": true, "patch_deltas": true, "date_parse": true,
+		"lead_explain": true, "outline": true,
 	} {
 		if capabilities[name] != want {
 			t.Errorf("capability %s = %v, want %v", name, capabilities[name], want)
 		}
 	}
+	// The /meta ETag is the store revision joined to a digest of the document,
+	// so it is never the bare revision; `meta.store_revision` stays the plain one.
 	revision, _ := meta.dig("meta", "store_revision").(string)
-	if meta.etag() != `"`+revision+`"` {
+	if !strings.HasPrefix(meta.etag(), `"`+revision+`.`) || meta.etag() == `"`+revision+`"` {
 		t.Errorf("meta etag = %q, store_revision = %q", meta.etag(), revision)
 	}
 	if strings.Contains(meta.Body, h.dir) {
@@ -69,26 +73,66 @@ func TestHealthReadinessMetaAndSections(t *testing.T) {
 	assertStrings(t, sections.ids(), []string{fixInbox, fixWork, fixHome}, "section ids")
 }
 
-// The three unrouted capabilities must be advertised false AND really absent.
-// A future PR that adds an endpoint has to flip the flag and delete the matching
-// 404 assertion in the same change.
-func TestUnroutedCapabilitiesAreAdvertisedAsFalseAndReallyAreAbsent(t *testing.T) {
+// Every advertised capability must really be routed. A flag that says true over
+// a 404 is a client building a button that can never work; a capability that is
+// removed has to flip its flag back in the same change.
+func TestAdvertisedCapabilitiesAreReallyRouted(t *testing.T) {
 	h := newHarness(t)
 	capabilities, _ := h.get("/api/v1/meta").dig("data", "capabilities").(map[string]any)
+	origin := map[string]string{"Origin": "http://127.0.0.1:4747"}
 
 	for capability, path := range map[string]string{
 		"undo": "/api/v1/history/undo", "redo": "/api/v1/history/redo",
 		"archive_sweep": "/api/v1/archive-sweeps",
 	} {
-		if capabilities[capability] != false {
-			t.Errorf("%s is advertised but has no endpoint", capability)
+		if capabilities[capability] != true {
+			t.Errorf("%s has an endpoint but is not advertised", capability)
 		}
-		if got := h.get(path).Status; got != 404 {
-			t.Errorf("GET %s = %d, so %s must be advertised true", path, got, capability)
+		// An empty body reaches the route's own validation, which is proof of
+		// dispatch: an unrouted path would be 404 before any body is read.
+		posted := h.json("POST", path, "{}", origin)
+		assertError(t, posted, 422, "validation_failed")
+	}
+	assertStatus(t, h.get("/api/v1/history"), 200)
+	assertStatus(t, h.get("/api/v1/archive-preview"), 200)
+	if got := openAndCancelStream(t, h.server).Code; got != 200 {
+		t.Errorf("GET /events = %d", got)
+	}
+
+	// The read routes answer 200 over the fixture.
+	for capability, path := range map[string]string{
+		"projects":     "/api/v1/projects",
+		"views":        "/api/v1/views/agenda",
+		"outline":      "/api/v1/views/outline",
+		"date_parse":   "/api/v1/dates/parse?input=tomorrow",
+		"lead_explain": "/api/v1/lead/explain?input=3d&anchor=2026-11-01",
+	} {
+		assertStatus(t, h.get(path), 200)
+		if capabilities[capability] != true {
+			t.Errorf("%s has an endpoint but is not advertised", capability)
 		}
-		posted := h.json("POST", path, "{}", map[string]string{"Origin": "http://127.0.0.1:4747"})
-		if posted.Status != 404 {
-			t.Errorf("POST %s = %d, so %s must be advertised true", path, posted.Status, capability)
+	}
+	// activate and the PATCH deltas are proven by landing them.
+	activated := h.json("POST", "/api/v1/tasks/"+fixPlants+"/activate", "", h.withIfMatch(h.etagOf(fixPlants)))
+	assertStatus(t, activated, 200)
+	delta := h.json("PATCH", "/api/v1/tasks/"+fixFlight, `{"add_tags":["probe"]}`, h.withIfMatch("*"))
+	assertStatus(t, delta, 200)
+
+	// Every flag the server publishes is one this test proves routed above; a
+	// new flag without a probe here fails rather than passing unexamined.
+	proven := map[string]bool{
+		"undo": true, "redo": true, "archive_sweep": true, "events": true, "projects": true,
+		"views": true, "outline": true, "date_parse": true, "lead_explain": true,
+		"activate": true, "patch_deltas": true,
+	}
+	for capability, value := range capabilities {
+		if value == true && !proven[capability] {
+			t.Errorf("capability %s is advertised but this test does not prove it routed", capability)
+		}
+	}
+	for capability := range proven {
+		if capabilities[capability] != true {
+			t.Errorf("%s is routed but not advertised", capability)
 		}
 	}
 }
@@ -229,12 +273,13 @@ func TestTaskRepresentationAndSourceExactLookup(t *testing.T) {
 	task := live.data()
 
 	expected := []string{
-		"archived", "availability_blocker_id", "availability_reason", "available", "available_at",
-		"body", "child_count", "closed", "contexts", "deadline", "deadline_time", "deferred",
-		"delegation", "depth", "descendant_count", "formal_links", "id", "lead", "lead_human", "lead_opens",
-		"lead_opens_at", "links", "parent_id", "priority", "project", "recurrence",
-		"recurrence_human", "rejected", "revision", "scheduled", "scheduled_time", "section_id", "source",
-		"state", "tags", "title",
+		"agent_ready", "archived", "archived_on", "availability_blocker_id", "availability_reason",
+		"available", "available_at", "body", "child_count", "closed", "contexts", "created",
+		"deadline", "deadline_time", "deferred", "delegation", "depth", "descendant_count",
+		"formal_links", "id", "lead", "lead_human", "lead_opens", "lead_opens_at", "links",
+		"parent_id", "priority", "project", "quadrant", "recurrence", "recurrence_human", "rejected",
+		"revision", "scheduled", "scheduled_time", "section_id", "source", "state", "tags", "title",
+		"updated",
 	}
 	keys := make([]string, 0, len(task))
 	for key := range task {

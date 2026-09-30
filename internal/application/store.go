@@ -126,6 +126,32 @@ type HistoryStepper interface {
 	HistoryStep(delta int) (store.HistoryOutcome, string)
 }
 
+// HistoryPlanner is the journal read a remote client needs before it acts:
+// the next labels in both directions and the revision they were read at, plus
+// a step pinned to that revision.
+//
+// A local surface can act on the journal as it stands, because what it shows
+// and what it undoes are the same moment. A client across HTTP cannot: between
+// its peek and its click another surface may write, and an unguarded undo
+// would revert THAT write instead of the one the button named.
+type HistoryPlanner interface {
+	PeekHistory() store.HistoryPeek
+	GuardedHistoryStep(delta int, expectedRevision string) store.HistoryStepResult
+}
+
+// RevisionReader answers "has anything changed?" without a full checked read:
+// the digest of the bytes, no parse, no validation. A store that lacks it is
+// still answered, through CheckedReadSnapshot, only more expensively.
+type RevisionReader interface {
+	StoreRevision() (string, error)
+}
+
+// The production store has both; the HTTP manager routes depend on it.
+var (
+	_ HistoryPlanner = (*store.Store)(nil)
+	_ RevisionReader = (*store.Store)(nil)
+)
+
 // Placer is a whole-task atomic changeset plus the revision that guards it.
 //
 // Ordering needs both: a move is a `location` change guarded by the revision

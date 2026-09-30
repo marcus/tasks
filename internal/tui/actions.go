@@ -669,7 +669,7 @@ func (m *Model) OpenDatePopup() {
 		Hint: "fri · two weeks · 2w · in two minutes · date time Zone · esc cancels", MinWidth: 50,
 		ReturnMode: ReturnList, TargetID: id,
 		Submit: func(raw string) string {
-			value, err := ParseTemporal(raw, m.currentDate(), m.temporalContext())
+			value, err := ParseTemporal(raw, m.currentDate(), m.temporalContext(), m.dateOrder())
 			if err != nil {
 				return "can't parse \u201c" + raw + "\u201d"
 			}
@@ -863,7 +863,7 @@ func (m *Model) parseSectionDates(raw string) (start, end, fail string) {
 		if part == "" {
 			continue
 		}
-		value, err := ParseTemporal(part, m.currentDate(), m.temporalContext())
+		value, err := ParseTemporal(part, m.currentDate(), m.temporalContext(), m.dateOrder())
 		if err != nil {
 			return "", "", "can't parse “" + part + "”"
 		}
@@ -903,7 +903,7 @@ func (m *Model) RenameProject() {
 				return "title cannot be blank"
 			}
 			if !(result.OK() || result.NoChange()) {
-				return "project no longer exists"
+				return projectFailure(result)
 			}
 			m.formSuccess(func() {
 				m.Flash("renamed: " + strings.TrimSpace(raw))
@@ -932,9 +932,13 @@ func (m *Model) CaptureIntoProject() {
 			if title == "" {
 				return "task title cannot be blank"
 			}
-			result := m.app.CreateTask(application.CreateCommand{
+			// Prepared here so the flash names the title that was stored: a
+			// trailing URL is lifted into a formal link on the way in.
+			command := m.app.PrepareCreateTask(application.CreateCommand{
 				Title: title, State: "TODO", ParentID: id,
-			}, m.operation())
+			})
+			title = command.Title
+			result := m.app.CreateTask(command, m.operation())
 			if !result.OK() {
 				return outcomeMessage(result, "could not capture the task")
 			}
@@ -1082,7 +1086,7 @@ func (m *Model) projectCompleteConfirmKey(key string) {
 		result := m.app.CompleteProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		closed := 0
@@ -1130,7 +1134,7 @@ func (m *Model) projectDropConfirmKey(key string) {
 		result := m.app.DropProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		closed := 0
@@ -1174,7 +1178,7 @@ func (m *Model) projectReopenConfirmKey(key string) {
 		result := m.app.ReopenProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		m.Flash("↺ reopened " + project.Title)
@@ -1197,7 +1201,7 @@ func (m *Model) projectArchiveConfirmKey(key string) {
 		result := m.app.ArchiveProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		moved := len(result.TouchedIDs)
@@ -1270,6 +1274,7 @@ func (m *Model) StartTaskEdit(focus string) {
 		Operation: m.operation,
 		Today:     m.currentDate,
 		Context:   m.temporalContext(),
+		Order:     m.dateOrder(),
 		TargetID:  item.ID,
 		Focus:     focus,
 		ContextOptions: func() []string {
@@ -1476,6 +1481,32 @@ func (m *Model) temporalContext() temporal.Context {
 		return temporal.Context{}
 	}
 	return context
+}
+
+// dateOrder is the configured reading of an ambiguous numeric date (date_order),
+// the same one the CLI passes, so 10/2 means one day on every surface.
+func (m *Model) dateOrder() temporal.Order { return temporal.OrderNamed(m.paths.DateOrder) }
+
+// projectFailure is what a refused section action says. Only a missing section
+// is "gone"; every other refusal says what actually happened — the shared
+// refusal's own sentence when the core turned it away (the Inbox and the
+// Projects heading cannot be renamed, closed or archived), or the store's own
+// words when it could not be read or locked, so an unavailable or invalid file
+// is never reported as a deleted project.
+func projectFailure(result application.Outcome) string {
+	if result.NotFound() {
+		return "project no longer exists"
+	}
+	fallback := "project action failed — try again"
+	switch result.Status {
+	case store.MutationStoreInvalid:
+		fallback = "task file is invalid — run `tasks check`"
+	case store.MutationUnsupportedSchema:
+		fallback = "task file schema is not supported by this build"
+	case store.MutationUnavailable:
+		fallback = "task store unavailable — try again"
+	}
+	return outcomeMessage(result, fallback)
 }
 
 // outcomeMessage is the user-visible sentence for a refused mutation: the

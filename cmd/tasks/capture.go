@@ -57,6 +57,7 @@ func (s *surfaceContext) capture(args []string, proposed bool) int {
 		Factory:         func() application.Store { return s.writeStore() },
 		TemporalContext: func() temporal.Context { return context },
 		HostContext:     s.paths.HostContext,
+		LinkShorthands:  s.paths.Links,
 	})
 	if err != nil {
 		return abort(err.Error())
@@ -285,7 +286,9 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	if command.Title == "" {
 		return command, flags, abort(usage)
 	}
-	command.Title, command.Links = liftTitleLink(command.Title, command.Links)
+	// A title ending in a URL lifts it into a formal link (links.LiftTitleURL).
+	// That is application.PrepareCreateTask's job, not this parser's, so the
+	// HTTP create and the TUI get the identical rewrite.
 	// --under (nest under a task) and --project (file under a section) are two
 	// different destinations — pick one.
 	if under != "" && command.Project != "" {
@@ -426,52 +429,6 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	return command, flags, 0
 }
 
-// liftTitleLink is docs/ideas.md item 6: a title that ENDS in a bare URL keeps
-// the words and hands the URL to the formal link list, so
-// `capture "read the RFC https://example.com/rfc"` files a human title with a
-// real link instead of a row whose title is half address bar.
-//
-// Three deliberate limits keep it unambiguous, because a title rewrite the
-// caller did not ask for has to be predictable:
-//
-//   - only the LAST whitespace-separated word is considered, and only when it is
-//     already a valid formal URL — no guessing at bare hosts, no shorthand
-//     expansion. Sentence punctuation the URL picked up from the prose ("… see
-//     https://example.com/rfc.") is peeled off by the SAME rule links.Extract
-//     uses and handed back to the title, so the stored link is the one the
-//     title's own extraction would have produced rather than a 404 with a
-//     period on the end.
-//   - a title that is ONLY a URL keeps its title. There is no human remainder to
-//     keep and a blank title is not a thing the store accepts; the URL is still
-//     lifted into a link, so the row gains the formal link either way.
-//   - a URL the caller already passed with --link is not lifted twice, and every
-//     explicit --link keeps its position and its label.
-func liftTitleLink(title string, explicit []links.FormalLink) (string, []links.FormalLink) {
-	fields := strings.Fields(title)
-	if len(fields) == 0 {
-		return title, explicit
-	}
-	candidate := fields[len(fields)-1]
-	url := links.TrimSentenceTail(candidate)
-	if !links.ValidFormalURL(url) {
-		return title, explicit
-	}
-	for _, link := range explicit {
-		if link.URL == url {
-			return title, explicit
-		}
-	}
-	lifted := append(explicit, links.FormalLink{URL: url})
-	remainder := strings.TrimSpace(strings.TrimSuffix(strings.TrimRight(title, " \t"), candidate))
-	if remainder == "" {
-		// Nothing human to keep — the title stays as the caller typed it and the
-		// row gains the link anyway. A title of just punctuation is not a title.
-		return title, lifted
-	}
-	// The punctuation the URL shed belongs to the sentence, so it stays.
-	return remainder + strings.TrimPrefix(candidate, url), lifted
-}
-
 // leadGateConflictHint is Rule 3's CLI-side wording, shared with `tasks lead`.
 // It fires before a write the store would only reject, so a capture never
 // half-lands.
@@ -490,7 +447,7 @@ func leadGateConflictHint(span string) string {
 func parseCaptureTemporal(expression, field string, context temporal.Context,
 	options temporalOptions, order temporal.Order) (temporal.Value, int) {
 
-	value, err := temporal.ParseExpression(expression, temporal.ParseOptions{
+	value, err := temporal.ParseText(expression, temporal.ParseOptions{
 		Today: context.LocalDate(), Order: order,
 		Timezone: options.timezone, Floating: options.floating, Fold: options.fold,
 		FoldSpecified: options.foldGiven,

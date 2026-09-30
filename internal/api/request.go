@@ -282,11 +282,17 @@ func optionalBody(request *http.Request) (*jsonObject, error) {
 var etagPattern = regexp.MustCompile(`^"([^"\\]+)"$`)
 
 // ifMatch is App#if_match!: the precondition is REQUIRED on every task write,
-// and a malformed one is a validation failure rather than a missing one.
+// and a malformed one is a validation failure rather than a missing one. A bare
+// `*` is neither: it is a well-formed header that asserts only that the task
+// exists, which no write here can be decided against, so it is the same 428 a
+// replacing PATCH gets. Only a delta-only PATCH (patchPrecondition) accepts it.
 func ifMatch(request *http.Request) (string, error) {
 	raw := request.Header.Get("If-Match")
 	if raw == "" {
 		return "", errorOf(428, "missing_precondition")
+	}
+	if strings.TrimSpace(raw) == ifMatchAny {
+		return "", wildcardRefusal()
 	}
 	match := etagPattern.FindStringSubmatch(raw)
 	if match == nil {

@@ -114,3 +114,16 @@ func (q *Queries) InboxItems() []store.Item {
 func (q *Queries) QuadrantOf(item store.Item, urgentDays int) string {
 	return Quadrant(item, q.Today(), urgentDays)
 }
+
+// QuadrantFor is the classification a single task carries on its own: its
+// quadrant under the configured window (WithUrgentDays) for an open live task,
+// and false for a proposed, closed, or archived one, which no quadrant
+// describes. Unlike the `quadrants` view it does not require the task to be
+// available — an on-hold task is still important or urgent, it just is not
+// listed yet.
+func (q *Queries) QuadrantFor(item store.Item) (string, bool) {
+	if item.Source != store.SourceLive || !isOpen(item.State) {
+		return "", false
+	}
+	return q.QuadrantOf(item, q.urgentDays), true
+}

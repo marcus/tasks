@@ -59,7 +59,7 @@ func (s *Server) createTask(request *http.Request, requestID string) (response, 
 	if err := rejectUnknownFields(body, createFields); err != nil {
 		return response{}, err
 	}
-	if err := validateCreateBody(body); err != nil {
+	if err := validateCreateBody(body, s.expandLink); err != nil {
 		return response{}, err
 	}
 	if err := s.ensureStoreReady(); err != nil {
@@ -192,7 +192,7 @@ func (s *Server) createCommand(body *jsonObject) (application.CreateCommand, err
 	// CLI's `--link` rather than the patch field because a create names what it
 	// is adding; the value shape is identical, which is what parity requires.
 	if body.has("links") && !body.isNull("links") {
-		values, err := formalLinks(body.raw("links"))
+		values, err := formalLinks(body.raw("links"), s.expandLink)
 		if err != nil {
 			return application.CreateCommand{}, validationError(reason("links", err.Error()))
 		}
@@ -253,7 +253,7 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 	if _, err := queryParams(request); err != nil {
 		return response{}, err
 	}
-	expected, err := ifMatch(request)
+	expected, wildcard, err := patchPrecondition(request)
 	if err != nil {
 		return response{}, err
 	}
@@ -261,11 +261,16 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 	if err != nil {
 		return response{}, err
 	}
-	if err := rejectUnknownFields(body, patchFields); err != nil {
+	if err := rejectUnknownFields(body, append(append([]string{}, patchFields...), deltaFields...)); err != nil {
 		return response{}, err
 	}
 	if body.empty() {
 		return response{}, validationError(reason("changes", "must contain at least one field"))
+	}
+	// `If-Match: *` reaches the store as NO precondition, which is sound only
+	// because every member is a delta the store composes under its own lock.
+	if wildcard && !deltaOnly(body) {
+		return response{}, wildcardRefusal()
 	}
 
 	read, readErr := s.options.Read()
@@ -277,7 +282,10 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 		return response{}, errorWith(404, "not_found", "No live task with that id.").
 			withDetails(pairDetails(detailPair{Key: "field", Value: "id"}, detailPair{Key: "id", Value: id}))
 	}
-	if err := validatePatchBody(body, read.Queries, current); err != nil {
+	if err := validatePatchBody(body, read.Queries, current, s.expandLink); err != nil {
+		return response{}, err
+	}
+	if err := validatePatchDeltas(body); err != nil {
 		return response{}, err
 	}
 
@@ -305,17 +313,7 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 	}); err != nil {
 		return response{}, err
 	}
-	item, resources, revision, err := s.resourceAfter(outcome, id)
-	if err != nil {
-		return response{}, err
-	}
-	w := jsonout.New()
-	writeSuccess(w, func(w *jsonout.Writer) { resources.writeTask(w, item) }, revision)
-	return response{
-		status:  200,
-		headers: map[string]string{"etag": etag(resources.revisionFor(item))},
-		body:    w.Bytes(),
-	}, nil
+	return s.taskWriteResponse(outcome, id)
 }
 
 func placementOf(changes []store.Change) bool {
@@ -333,9 +331,14 @@ func placementOf(changes []store.Change) bool {
 // has no operation behind it. Answering 501 with the missing capability named is
 // the only response that cannot mislead a client into believing a write landed.
 
-// deleteTask is the undoable hard delete. It answers 204 with no body, so the
-// only thing a client learns from a success is that the subtree is gone — which
-// is why the refusals below it carry the counts instead.
+// deleteTask is the undoable hard delete.
+//
+// A plain delete removes one leaf and answers 204: the request named the one
+// task that is gone, so there is nothing further to say. `cascade=true` answers
+// 200 with `{deleted: [...]}` — every task the subtree removed, root first, as
+// it stood just before the write — because a client showing that subtree
+// cannot otherwise learn which rows went, and that is the shape
+// `tasks delete --json` reports. The refusals carry the counts instead.
 //
 // The If-Match is MANDATORY here and reaches the store as the precondition it
 // guards the whole subtree with, so unlike the delegation routes there is no
@@ -357,8 +360,14 @@ func (s *Server) deleteTask(request *http.Request, id, requestID string) (respon
 	if err != nil {
 		return response{}, err
 	}
-	if err := s.ensureStoreReady(); err != nil {
-		return response{}, err
+	// The readiness read doubles as the cascade's description of what it is
+	// about to remove: once the write lands there is nothing left to render.
+	// The If-Match guards every revision component, the subtree's membership
+	// included, so when this read carries the revision the client sent, a
+	// delete that succeeds removed exactly the tasks it holds.
+	before, readErr := s.options.Read()
+	if readErr != nil || !before.OK() {
+		return response{}, readFailure(before, readErr)
 	}
 	operation, err := s.operationContext(requestID)
 	if err != nil {
@@ -370,7 +379,36 @@ func (s *Server) deleteTask(request *http.Request, id, requestID string) (respon
 	if err := s.mutationFailure(outcome, mutationRefusal{ID: id}); err != nil {
 		return response{}, err
 	}
-	return response{status: 204}, nil
+	if !*cascade {
+		return response{status: 204}, nil
+	}
+	return deletedResponse(before, outcome), nil
+}
+
+// deletedResponse is the cascade's 200: the removed tasks, in the store's
+// removal order (the root, then its subtree in file order), each rendered from
+// the pre-delete read. The ids come from the store's own report of what it
+// removed rather than from that read, so the list can never name a task the
+// write did not take; in the one interleaving where the read predates a change
+// the client's If-Match already reflected, an id the read never saw is left out
+// rather than invented.
+func deletedResponse(before CheckedRead, outcome application.Outcome) response {
+	resources := newResourceContext(before.Queries)
+	removed := outcome.TouchedIDs
+	w := jsonout.New()
+	writeSuccess(w, func(w *jsonout.Writer) {
+		w.BeginObject()
+		w.Key("deleted")
+		w.BeginArray()
+		for _, id := range removed {
+			if item, found := findInSource(before.Queries, id, store.SourceLive); found {
+				resources.writeTask(w, item)
+			}
+		}
+		w.EndArray()
+		w.EndObject()
+	}, outcome.StoreRevision)
+	return response{status: 200, body: w.Bytes()}
 }
 
 // decideProposal accepts or declines one proposal.
@@ -439,17 +477,9 @@ func (s *Server) decideProposal(request *http.Request, id, action, requestID str
 	if err := s.mutationFailure(outcome, mutationRefusal{ID: id, SemanticInvalid: true}); err != nil {
 		return response{}, err
 	}
-	item, resources, revision, err := s.resourceAfter(outcome, id)
-	if err != nil {
-		return response{}, err
-	}
-	w := jsonout.New()
-	writeSuccess(w, func(w *jsonout.Writer) { resources.writeTask(w, item) }, revision)
-	return response{
-		status:  200,
-		headers: map[string]string{"etag": etag(resources.revisionFor(item))},
-		body:    w.Bytes(),
-	}, nil
+	// `complete=true` cascades DONE over accepted open descendants, which
+	// `meta.effects` reports like any other completion.
+	return s.taskWriteResponse(outcome, id)
 }
 
 // rejectNotes is App#optional_reject_notes!: an absent body keeps the historical
@@ -876,9 +906,9 @@ func (s *Server) renameProject(request *http.Request, id, requestID string) (res
 	if err != nil {
 		return response{}, err
 	}
-	before := s.options.App.ProjectResult(id, operation)
-	if !before.OK() {
-		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
+	before, err := s.sectionTarget(id, "rename", operation)
+	if err != nil {
+		return response{}, err
 	}
 	outcome := s.options.App.RenameProject(id, title, operation)
 	if err := s.projectMutationFailure(outcome, id); err != nil {
@@ -889,7 +919,7 @@ func (s *Server) renameProject(request *http.Request, id, requestID string) (res
 	// no store holds.
 	renamed := strings.TrimSpace(title)
 	return s.projectAfterMutation(id, operation, func() taskquery.ProjectView {
-		return renamedProjectView(before.Data, renamed)
+		return renamedProjectView(before, renamed)
 	})
 }
 
@@ -908,16 +938,16 @@ func (s *Server) completeProject(request *http.Request, id, requestID string) (r
 	if err != nil {
 		return response{}, err
 	}
-	before := s.options.App.ProjectResult(id, operation)
-	if !before.OK() {
-		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
+	before, err := s.sectionTarget(id, "complete", operation)
+	if err != nil {
+		return response{}, err
 	}
 	outcome := s.options.App.CompleteProject(id, operation)
 	if err := s.projectMutationFailure(outcome, id); err != nil {
 		return response{}, err
 	}
 	return s.projectAfterMutation(id, operation, func() taskquery.ProjectView {
-		return completedProjectView(before.Data, outcome)
+		return completedProjectView(before, outcome)
 	})
 }
 
@@ -936,16 +966,16 @@ func (s *Server) dropProject(request *http.Request, id, requestID string) (respo
 	if err != nil {
 		return response{}, err
 	}
-	before := s.options.App.ProjectResult(id, operation)
-	if !before.OK() {
-		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
+	before, err := s.sectionTarget(id, "drop", operation)
+	if err != nil {
+		return response{}, err
 	}
 	outcome := s.options.App.DropProject(id, operation)
 	if err := s.projectMutationFailure(outcome, id); err != nil {
 		return response{}, err
 	}
 	return s.projectAfterMutation(id, operation, func() taskquery.ProjectView {
-		return droppedProjectView(before.Data, outcome)
+		return droppedProjectView(before, outcome)
 	})
 }
 
@@ -964,16 +994,16 @@ func (s *Server) reopenProject(request *http.Request, id, requestID string) (res
 	if err != nil {
 		return response{}, err
 	}
-	before := s.options.App.ProjectResult(id, operation)
-	if !before.OK() {
-		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
+	before, err := s.sectionTarget(id, "reopen", operation)
+	if err != nil {
+		return response{}, err
 	}
 	outcome := s.options.App.ReopenProject(id, operation)
 	if err := s.projectMutationFailure(outcome, id); err != nil {
 		return response{}, err
 	}
 	return s.projectAfterMutation(id, operation, func() taskquery.ProjectView {
-		return reopenedProjectView(before.Data)
+		return reopenedProjectView(before)
 	})
 }
 
@@ -1004,11 +1034,11 @@ func (s *Server) archiveProject(request *http.Request, id, requestID string) (re
 	if err != nil {
 		return response{}, err
 	}
-	view := s.options.App.ProjectResult(id, operation)
-	if !view.OK() {
-		return response{}, projectReadFailure(view.Status, firstReadMessage(view.Errors))
+	view, err := s.sectionTarget(id, "archive", operation)
+	if err != nil {
+		return response{}, err
 	}
-	openCount, heldCount := view.Data.OpenCount, view.Data.HeldCount
+	openCount, heldCount := view.OpenCount, view.HeldCount
 	if openCount+heldCount > 0 && !*force {
 		return response{}, errorWith(409, "conflict",
 			"The project still has open tasks; retry with force=true to archive them.").
@@ -1072,15 +1102,38 @@ func projectTitle(body *jsonObject) (string, error) {
 // pre-read stands in rather than a 404 that would misdescribe the store.
 func (s *Server) projectAfterMutation(id string, operation *application.OperationContext,
 	synthesize func() taskquery.ProjectView) (response, error) {
-	read := s.options.App.ProjectResult(id, operation)
+	read := s.options.App.SectionTargetResult(id, operation)
 	if read.OK() {
-		return projectResponse(read.Data, read.StoreRevision), nil
+		return projectResponse(read.Data.View, read.StoreRevision), nil
 	}
 	status := s.options.App.ReadStatusResult(operation)
 	if !status.OK() {
 		return response{}, projectReadFailure(status.Status, firstReadMessage(status.Errors))
 	}
 	return projectResponse(synthesize(), status.StoreRevision), nil
+}
+
+// sectionTarget resolves the section a project route acts on and applies the
+// shared refusal for that action.
+//
+// The routes are named for projects, but they act on any live section the
+// Outline shows — the same set the TUI's section rows act on — so a nested
+// sub-section or an area with no open work is no longer a 404 over HTTP while
+// the terminal can rename it. The Inbox and the Projects heading resolve and
+// are then refused by taskquery.SectionActionRefusal, which is a conflict with
+// what the section is for rather than a missing id.
+func (s *Server) sectionTarget(id, action string, operation *application.OperationContext) (taskquery.ProjectView, error) {
+	target := s.options.App.SectionTargetResult(id, operation)
+	if !target.OK() {
+		return taskquery.ProjectView{}, projectReadFailure(target.Status, firstReadMessage(target.Errors))
+	}
+	if refusal := target.Data.Refusal(action); refusal != "" {
+		return taskquery.ProjectView{}, errorWith(409, "conflict", refusal).withDetails(pairDetails(
+			detailPair{Key: "id", Value: id},
+			detailPair{Key: "kind", Value: target.Data.Role},
+		))
+	}
+	return target.Data.View, nil
 }
 
 func projectResponse(view taskquery.ProjectView, revision string) response {
@@ -1231,7 +1284,7 @@ func sortedFieldErrors(fields map[string][]string) []fieldError {
 func projectReadFailure(status application.ReadStatus, message string) error {
 	switch status {
 	case application.ReadNotFound:
-		return errorOf(404, "not_found")
+		return errorWith(404, "not_found", "No project with that id.")
 	case application.ReadUnsupportedSchema:
 		return errorOf(503, "unsupported_schema_version").
 			withDetails(pairDetails(detailPair{Key: "supported_version", Value: schemaVersion}))

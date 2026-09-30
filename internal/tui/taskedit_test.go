@@ -560,7 +560,7 @@ func TestATimedDateKeepsItsWallTimeAndZoneThroughTheSave(t *testing.T) {
 
 func TestTemporalFormattingRoundTripsThroughTheParser(t *testing.T) {
 	parsed, err := ParseTemporal("2026-08-09 17:30 Europe/Berlin", temporal.Date{Year: 2026, Month: 8, Day: 1},
-		temporal.Context{})
+		temporal.Context{}, temporal.MDY)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestTemporalFormattingRoundTripsThroughTheParser(t *testing.T) {
 	if text != "2026-08-09 17:30 Europe/Berlin" {
 		t.Fatalf("formatting produced %q", text)
 	}
-	again, err := ParseTemporal(text, temporal.Date{Year: 2026, Month: 8, Day: 1}, temporal.Context{})
+	again, err := ParseTemporal(text, temporal.Date{Year: 2026, Month: 8, Day: 1}, temporal.Context{}, temporal.MDY)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +589,7 @@ func TestTemporalEditorAcceptsNaturalAndCompactRelativeValues(t *testing.T) {
 	}
 	for input, want := range cases {
 		t.Run(input, func(t *testing.T) {
-			parsed, err := ParseTemporal(input, context.LocalDate(), context)
+			parsed, err := ParseTemporal(input, context.LocalDate(), context, temporal.MDY)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -597,6 +597,35 @@ func TestTemporalEditorAcceptsNaturalAndCompactRelativeValues(t *testing.T) {
 				t.Fatalf("ParseTemporal(%q) = %q, want %q", input, got, want)
 			}
 		})
+	}
+}
+
+// A numeric date is a date, not a zone word, and it reads in the configured
+// order: before the shared parser, "10/2" was taken for a zone identifier and
+// the configured date_order was never consulted.
+func TestTemporalEditorReadsNumericDatesInTheConfiguredOrder(t *testing.T) {
+	context, err := temporal.NewContext(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), "Etc/UTC", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		input string
+		order temporal.Order
+		want  string
+	}{
+		{"10/2", temporal.MDY, "2026-10-02"},
+		{"10/2", temporal.DMY, "2027-02-10"},
+		{"10/2 4pm Europe/Berlin", temporal.DMY, "2027-02-10 16:00 Europe/Berlin"},
+		{"2026/08/09", temporal.MDY, "2026-08-09"},
+	}
+	for _, c := range cases {
+		parsed, err := ParseTemporal(c.input, context.LocalDate(), context, c.order)
+		if err != nil {
+			t.Fatalf("ParseTemporal(%q, %s): %v", c.input, c.order, err)
+		}
+		if got := FormatTemporal(parsed); got != c.want {
+			t.Errorf("ParseTemporal(%q, %s) = %q, want %q", c.input, c.order, got, c.want)
+		}
 	}
 }
 

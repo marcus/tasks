@@ -121,6 +121,7 @@ type TaskEditorOptions struct {
 	Operation func() *application.OperationContext
 	Today     func() temporal.Date
 	Context   temporal.Context
+	Order     temporal.Order
 	TargetID  string
 	Focus     string
 	// ContextOptions and TagOptions are the completions the two token fields
@@ -145,7 +146,7 @@ func NewTaskEditorSession(options TaskEditorOptions) (*TaskEditorSession, error)
 	}
 	session.snapshot = snapshot
 	form, err := NewTaskEditForm(TaskEditFormOptions{
-		Snapshot: snapshot, Today: options.Today, Context: options.Context,
+		Snapshot: snapshot, Today: options.Today, Context: options.Context, Order: options.Order,
 		ContextOptions: options.ContextOptions, TagOptions: options.TagOptions,
 		Focus: options.Focus,
 	})
