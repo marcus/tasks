@@ -71,9 +71,22 @@ func (s *Server) meta(request *http.Request) (response, error) {
 	if _, err := queryParams(request); err != nil {
 		return response{}, err
 	}
+	// Conditional polling: a matching If-None-Match is answered from the
+	// revision digest alone, without parsing or validating the store. Equal
+	// bytes under this process's fixed configuration yield an equal document
+	// and an equal verdict, so the 304 cannot hide a change a 200 would show.
+	conditional := request.Header.Get("If-None-Match")
+	if conditional != "" {
+		if revision, err := s.options.App.StoreRevision(); err == nil && noneMatch(conditional, revision, false) {
+			return metaNotModified(revision), nil
+		}
+	}
 	read, err := s.options.Read()
 	if err != nil || !read.OK() {
 		return response{}, readFailure(read, err)
+	}
+	if noneMatch(conditional, read.Revision, true) {
+		return metaNotModified(read.Revision), nil
 	}
 	w := jsonout.New()
 	writeSuccess(w, func(w *jsonout.Writer) {
@@ -106,20 +119,33 @@ func (s *Server) meta(request *http.Request) (response, error) {
 		w.KeyStr("temporal_precision", "minute")
 		w.Key("capabilities")
 		w.BeginObject()
-		// Capabilities advertise what THIS server routes. The project routes
-		// are dispatched, so `projects` is true; the history and archive-sweep
-		// endpoints are not routed at all, so they stay false.
+		// Capabilities advertise what THIS server routes, and every flag here
+		// is dispatched: projects, the history and archive-sweep manager
+		// endpoints, and the /events stream.
 		w.KeyBool("projects", true)
-		w.KeyBool("undo", false)
-		w.KeyBool("redo", false)
-		w.KeyBool("archive_sweep", false)
-		w.KeyBool("events", false)
+		w.KeyBool("undo", true)
+		w.KeyBool("redo", true)
+		w.KeyBool("archive_sweep", true)
+		w.KeyBool("events", true)
 		w.EndObject()
 		w.EndObject()
 	}, read.Revision)
 	return response{
-		status: 200, headers: map[string]string{"etag": etag(read.Revision)}, body: w.Bytes(),
+		status:  200,
+		headers: map[string]string{"etag": etag(read.Revision), "cache-control": metaCacheControl},
+		body:    w.Bytes(),
 	}, nil
+}
+
+// metaCacheControl lets a browser keep /meta and revalidate it on every use,
+// which turns an ordinary fetch() poll into the conditional GET above. Every
+// other route stays no-store.
+const metaCacheControl = "no-cache"
+
+func metaNotModified(revision string) response {
+	return response{status: 304, headers: map[string]string{
+		"etag": etag(revision), "cache-control": metaCacheControl,
+	}}
 }
 
 func (s *Server) sections(request *http.Request) (response, error) {

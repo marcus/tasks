@@ -97,13 +97,24 @@ func run(argv []string) int {
 // and a server that reported failure for an ordinary shutdown would be wrong
 // in exactly the way a supervisor notices.
 func serve(listener net.Listener, handler http.Handler) int {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	return serveUntil(listener, handler, stop)
+}
+
+// serveUntil is serve with the stop signal supplied, so the drain is testable
+// without signalling the test process.
+func serveUntil(listener net.Listener, handler http.Handler, stop <-chan os.Signal) int {
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-
+	// Shutdown waits for handlers but never cancels them, and an /events
+	// stream only returns when told to, so the drain would otherwise run out
+	// its whole timeout on any open stream.
+	if streams, ok := handler.(interface{ CloseStreams() }); ok {
+		httpServer.RegisterOnShutdown(streams.CloseStreams)
+	}
 	done := make(chan error, 1)
 	go func() { done <- httpServer.Serve(listener) }()
 

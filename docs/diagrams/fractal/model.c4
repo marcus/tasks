@@ -124,8 +124,8 @@ model {
     metadata { uid 'api' fractalColor '#B59669' evidence ['cmd/tasks-api/main.go', 'internal/api/server.go', 'docs/api/openapi.yaml', 'docs/adr/0006-net-http-transport.md'] }
 
     listener = component 'Loopback Listener & Lifecycle' {
-      description 'Binds 127.0.0.1 only (port 4747), drains on SIGINT/SIGTERM; store factories yield a fresh store per access, not per request.'
-      metadata { uid 'api.listener' fractalColor '#B59669' evidence ['cmd/tasks-api/main.go', 'internal/api/seams.go'] }
+      description 'Binds 127.0.0.1 only (port 4747), drains on SIGINT/SIGTERM and ends open /events streams first; store factories yield a fresh store per access, not per request.'
+      metadata { uid 'api.listener' fractalColor '#B59669' evidence ['cmd/tasks-api/main.go', 'internal/api/seams.go', 'internal/api/events.go'] }
     }
 
     gates = component 'Transport Gates' {
@@ -134,8 +134,8 @@ model {
     }
 
     routes = component 'Routes & Representation' {
-      description 'Explicit dispatch: health, meta, sections, tasks, activate, decisions, delegation, notes, projects, recurrence explain. Write responses carry meta.effects (recurrence roll, completion cascade). Documented /views, /history, /events are unserved.'
-      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/activate.go', 'internal/api/effects.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
+      description 'Explicit dispatch: health, meta (If-None-Match 304 from the revision digest), sections, tasks, activate, decisions, delegation, notes, projects, recurrence explain, history peek and revision-pinned undo/redo, fingerprint-pinned archive preview and sweep, and a capped /events SSE stream. Write responses carry meta.effects (recurrence roll, completion cascade). Documented /views is unserved.'
+      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/activate.go', 'internal/api/effects.go', 'internal/api/history.go', 'internal/api/events.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
     }
 
     precondition = component 'ETag / If-Match Precondition' {

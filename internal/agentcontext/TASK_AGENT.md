@@ -179,8 +179,10 @@ task merely because it also contains task text.
   - review unavailable: `tasks list --unavailable`  (`--deferred` is an alias)
   - review own holds: `tasks list --someday`
   - inspect a task:   `tasks show "<ref>" [--json]`
-  - archive done:     `tasks archive`  (`--json` → `{roots, records, moved_ids}`)
-  - undo/redo:        `tasks undo` / `tasks redo`  (`--json` → `{action, label}`)
+  - archive done:     `tasks archive`  (`--json` → `{roots, records, moved_ids}`;
+                      `--dry-run` previews what would move and what blocks it)
+  - undo/redo:        `tasks undo` / `tasks redo`  (`--json` → `{action, label,
+                      store_revision}`); `tasks history` names the next of each
   - create a project: `tasks project create "<title>"`  (new empty project;
                       then `tasks move "<ref>" "<title>"` files tasks into it)
   - complete a project: `tasks project complete "<ref>"`  (closes its whole open subtree)

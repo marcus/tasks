@@ -1190,7 +1190,8 @@ commands that emit the error object today:
 | **every `--json` command** | `unsupported_schema_version` (see the schema version gate below) |
 | `claim`, `release`, `delegate`, `undelegate`, `workref` | `conflict` (lost race / worker mismatch) |
 | `archive` | `conflict` (with `reason`: `open_descendants`, `archive_conflict`, `preview_changed`, `write_failed`) |
-| `undo`, `redo` | `empty`, `conflict` |
+| `undo`, `redo` | `empty`, `conflict` (with `reason`: `journal_conflict`, `stale_store_revision`) |
+| `history` | `unavailable` |
 | `open` | `not_found`, `ambiguous`, `unavailable` |
 
 `unsupported_schema_version` is the first row because it is the one refusal
@@ -1260,10 +1261,11 @@ than what would be nicer.
 | `defer` | ✅ | `{touched: [task]}` |
 | `someday` | ✅ | `{touched: [task]}` |
 | `activate` | ✅ | `{touched: [task]}` |
-| `archive` | ✅ | `{roots, records, moved_ids}` — `roots` is what the human line counts, `records` the whole swept subtree (what `moved_ids` lists). Deliberately not named `archived`: the sibling `project archive --json` uses that word for its record count. Refusals: `conflict` with `reason` = `open_descendants` (carrying `blocked` + `open_descendants`), `archive_conflict` (carrying `conflicting_ids`), `preview_changed` (the store changed while the sweep was being prepared — retry), or `write_failed`; `unsupported_schema_version` on a store whose declared schema version this build does not implement. |
+| `archive` | ✅ | `{roots, records, moved_ids}` — `roots` is what the human line counts, `records` the whole swept subtree (what `moved_ids` lists). Deliberately not named `archived`: the sibling `project archive --json` uses that word for its record count. `--dry-run`: the preview `{roots, descendants, records, candidate_ids, open_descendants, blocked: [{root_id, root_title, open_ids, open_titles}], fingerprint}`, exit 0 even when roots are blocked. Refusals: `conflict` with `reason` = `open_descendants` (carrying `blocked` + `open_descendants`), `archive_conflict` (carrying `conflicting_ids`), `preview_changed` (the store changed while the sweep was being prepared — retry; under `--fingerprint` it also carries the current `fingerprint`), or `write_failed`; `unsupported_schema_version` on a store whose declared schema version this build does not implement. |
 | `repair` | ✅ | `{action: "repair", ok, status, dry_run, written, fixes: [{file, line, kind, message, id?}], blockers: [{file, line, message}]}`. `kind` is `minted_id` or `dropped_temporal_keys`; `message` restates the `check` error the fix answers, so the two reports read line for line. `id` appears only on a pass that actually wrote — a dry run and a refused pass both mint an id to prove the file would validate and then discard it. Errors: `unrepairable` (carrying the same `fixes`/`blockers` document), `unsupported_schema_version`. |
-| `undo` | ✅ | `{action: "undo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
-| `redo` | ✅ | `{action: "redo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
+| `history` | ✅ | `{undo, redo, store_revision}` — each label a string or `null`; errors `unavailable`, `unsupported_schema_version` |
+| `undo` | ✅ | `{action: "undo", label, store_revision}` (the revision after the step); errors `empty`, `conflict` (`reason` = `journal_conflict` carrying `label`, or `stale_store_revision` carrying the current `store_revision`), `unsupported_schema_version` |
+| `redo` | ✅ | `{action: "redo", label, store_revision}`; errors as `undo` |
 | `config` | ✅ | the resolved settings object |
 | `help` | ✅ | `{commands: [{name, aliases, json, json_reason}]}` — this table, as data |
 | `-p` | ❌ | Opt-out: the result is an LLM harness's free-form transcript, not a value this CLI computes; the mutations it makes are readable through the commands that do emit JSON. A leading `--json` is **rejected** (exit 1) rather than folded into the prompt. |
@@ -1276,7 +1278,7 @@ form takes no preview and is unaffected. Retrying is always the right response,
 including for the one benign case — a sweep prepared either side of local
 midnight, whose day stamp is part of the fingerprint.
 
-`archive`, `undo`, and `redo` reject stray positional arguments (`tasks archive x`
+`archive`, `history`, `undo`, and `redo` reject stray positional arguments (`tasks archive x`
 is now `usage:` + exit 1, where it used to ignore the extra word). `help` is the
 deliberate exception: it accepts anything and prints the reference, because it is
 the command you reach for when you are already unsure.
@@ -1284,27 +1286,43 @@ the command you reach for when you are already unsure.
 **API parity.** The HTTP adapter is JSON-only, so structured output is not a
 capability that can drift there — what can drift is which capabilities it routes
 at all. `GET /api/v1/meta` advertises that honestly (`capabilities.undo`,
-`.redo`, `.archive_sweep` are `false` until the manager endpoints exist), and
-API adapter tests hold those flags to what the adapter actually dispatches.
-The CLI gaining structured `undo`/`redo`/`archive` results does not change what
-the API routes, and must not silently flip those flags.
+`.redo`, `.archive_sweep`, `.events`), and API adapter tests hold every flag to
+an endpoint the adapter really dispatches.
 
-**Reconcile these names when the manager endpoints land.**
-[`docs/api/openapi.yaml`](api/openapi.yaml) already describes the unimplemented
-`/history/undo`, `/history/redo`, and `/archive-sweeps` endpoints, and it chose
-different words for the same things. Whichever adapter is written second must
-adopt the other's vocabulary deliberately rather than by accident:
+**Manager vocabulary: one set of words on both surfaces.** The history and
+archive-sweep routes landed after the CLI's `--json` documents, and they adopt
+the CLI's names; the OpenAPI's earlier drafts (`data.swept`, a bare `blocked`
+count) were retired rather than carried as aliases. Each HTTP route has a CLI
+spelling, and the documents are byte-identical where both surfaces answer one
+question (`cmd/tasks` parity tests drive both over the same files):
 
-| Concept | CLI `--json` | `openapi.yaml` |
+| Concept | CLI | HTTP |
 |---|---|---|
-| sweep result | `{roots, records, moved_ids}` | `data.swept` (records moved) |
-| blocked sweep | `error: conflict`, `reason: open_descendants` | `code: conflict`, `details.open_descendants` |
-| unreadable schema version | `error: unsupported_schema_version` | `code: unsupported_schema_version` (503) |
-| undo/redo result | `{action, label}` | `HistoryStepResponse` → `data.label` |
-| partial archive overlap | `reason: archive_conflict` | (no analogue yet) |
+| peek next undo/redo | `tasks history --json` → `{undo, redo, store_revision}` | `GET /history` → `data` is the same document |
+| guarded undo/redo | `undo --store-revision REV --json` → `{action, label, store_revision}` | `POST /history/undo` `{store_revision}` → `data: {label, store_revision}` |
+| store moved since the peek | `error: conflict`, `reason: stale_store_revision`, `store_revision` | `409 conflict`, `details.reason: stale_store_revision`, `details.store_revision` |
+| files edited outside the journal | `error: conflict`, `reason: journal_conflict`, `label` | `409 conflict`, `details.reason: journal_conflict`, `details.label` |
+| nothing to undo | `error: empty` | `409 conflict`, `details.reason: empty` |
+| sweep preview | `tasks archive --dry-run --json` | `GET /archive-preview` → `data` is the same document |
+| pinned sweep | `archive --fingerprint FP --json` → `{roots, records, moved_ids}` | `POST /archive-sweeps` `{fingerprint}` → `data` is the same document |
+| preview changed | `reason: preview_changed` (+ `fingerprint` under `--fingerprint`) | `details.reason: preview_changed`, `details.fingerprint` |
+| blocked sweep | `reason: open_descendants`, `open_descendants`, `blocked: [{root_id, root_title, open_ids, open_titles}]` | `details` with the same three members |
+| partial archive overlap | `reason: archive_conflict`, `conflicting_ids` | `details.reason: archive_conflict`, `details.conflicting_ids` |
+| rolled-back sweep | `reason: write_failed` | `503` (`unavailable`, or `store_invalid` for a validation rollback), `details.reason: write_failed` |
+| unreadable schema version | `error: unsupported_schema_version` | `503 unsupported_schema_version` |
 
-The sweep's preview pinning matches the endpoint's documented `fingerprint` →
-`409 conflict` design, which is the one place the two already agree.
+The transport differences are deliberate: HTTP spells every refusal as the
+`conflict` code with a `details.reason`, where the CLI keeps its older
+`empty` error code for an exhausted journal; and the plain CLI `undo` and
+`archive` stay unguarded, because a local caller acts on the store as it stands,
+while the HTTP routes require the precondition, because a remote caller's view
+may be stale by the time it clicks.
+
+**Change detection.** `GET /api/v1/meta` answers `If-None-Match` with `304` from
+a digest of the files alone, and `GET /api/v1/events` streams `store.changed`
+frames carrying the new `store_revision`; see the OpenAPI for the stream budget
+and heartbeat. The CLI has no equivalent to either: a local caller reads
+`tasks history --json` (or any read) when it wants the current revision.
 
 ## Read commands
 
@@ -1565,11 +1583,12 @@ no fuzzy refs (a transport difference per design rule 7). See
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. `--json` emits `{roots, records, moved_ids}` (`roots` matches the human count; `records` is the whole swept subtree); because only a pre-sweep preview knows which records move, the JSON form pins the sweep to that preview and refuses if the store changed in between. Every refusal is an error object on stdout: `conflict` with `reason` = `open_descendants`, `archive_conflict`, `preview_changed`, or `write_failed`, or `unsupported_schema_version` on a store whose declared schema version this build does not implement. Stray positional arguments are now a usage error (exit 1). |
+| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. `--json` emits `{roots, records, moved_ids}` (`roots` matches the human count; `records` is the whole swept subtree); because only a pre-sweep preview knows which records move, the JSON form pins the sweep to that preview and refuses if the store changed in between. `--dry-run` prints that preview and writes nothing — counts, the ids that would move, every blocked root with its open children, and a `fingerprint` — and exits 0 even when roots are blocked. `--fingerprint FP` sweeps only while the preview still carries `FP` (the two-step contract of `GET /api/v1/archive-preview` + `POST /api/v1/archive-sweeps`), refusing `preview_changed` otherwise; it cannot be combined with `--dry-run`. Every refusal is an error object on stdout: `conflict` with `reason` = `open_descendants`, `archive_conflict`, `preview_changed`, or `write_failed`, or `unsupported_schema_version` on a store whose declared schema version this build does not implement. Stray positional arguments are now a usage error (exit 1). |
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. PROPOSED and accepted open tasks resolve directly; `--include-done` additionally widens to closed live tasks. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. In the TUI, `#` / Delete always confirm first (cascade confirm when the selection has descendants); same domain outcome and shared journal. |
 | `repair [--dry-run] [--json]` | `fix` | ✅ | Converge a store `check` refuses, in **one pass, one write**. It is the only command that can: every mutation validates the whole file, so the per-record repairs the code already documents cannot land while a second instance of the same defect is present, and the store is readable but unwritable (see Converging a wedged store below). Repairs, across `tasks.jsonl` **and** `archive.jsonl`: a record with no `id` (one is minted, from a pool spanning both files); an unknown key inside `scheduled_time`/`deadline_time` (dropped, the repair `Format::NESTED_FORWARD_COMPAT` documents). Anything else is a **blocker**: the pass refuses with exit 1, reports every blocker with `check`'s own wording, and writes nothing — it never leaves a partially repaired file. A file with an unparseable line or invalid UTF-8 always refuses, since writing would delete the line this build could not read. `--dry-run` reports the same plan and writes nothing. Never touches `updated` (see below). Journaled as a **repair** step, so `undo` faithfully restores the malformed bytes. `--json`: `{action, ok, status, dry_run, written, fixes: [{file, line, kind, message, id?}], blockers: [{file, line, message}]}`; a refusal is the standard error envelope with `error` = `unrepairable` or `unsupported_schema_version`. |
-| `undo [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`internal/journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--json` emits `{action: "undo", label}` naming the mutation it reverted, or an `empty`/`conflict` error object. |
-| `redo [--json]` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`, including the `{action: "redo", label}` result and its `empty`/`conflict` error objects. |
+| `history [--json]` | | ✅ | Peek at the shared journal without moving it: the label the next `undo` would revert and the next `redo` would replay (`nothing to undo` / `null` when a direction is empty), plus the `store_revision` both were read at. `--json` → `{undo, redo, store_revision}`, the same document as `GET /api/v1/history`. A label is the journal's plan: a store edited out-of-band after the journal's tip still shows one, and the step itself then refuses. |
+| `undo [--store-revision REV] [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`internal/journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--store-revision REV` pins the step to the revision `tasks history` reported, refusing (`reason: stale_store_revision`, nothing written) when any write landed since — the precondition `POST /api/v1/history/undo` requires; an empty value is a usage error. `--json` emits `{action: "undo", label, store_revision}` naming the mutation it reverted and the revision it left, or an `empty`/`conflict` error object. |
+| `redo [--store-revision REV] [--json]` | | ✅ | Replay the last undone mutation; same shared journal, conflict guard, and `--store-revision` pin as `undo`, including the `{action: "redo", label, store_revision}` result and its `empty`/`conflict` error objects. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). Deliberately has no `--json` — see the opt-out in Structured output (`--json`) coverage. |
 | `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, `delegation_modes`, tzdb version, fallback warning, prompt facts, and each setting's source. |
 | `install-merge-driver [DATA_REPO] [--json]` | | ✅ | Verify both JSONL paths select `merge=tasksjsonl`, then idempotently configure Git with the absolute installed executable. Defaults to the configured task-data repository, else the current Git repository. |

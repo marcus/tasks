@@ -50,7 +50,7 @@ func TestHealthReadinessMetaAndSections(t *testing.T) {
 	}
 	capabilities, _ := meta.dig("data", "capabilities").(map[string]any)
 	for name, want := range map[string]bool{
-		"projects": true, "undo": false, "redo": false, "archive_sweep": false, "events": false,
+		"projects": true, "undo": true, "redo": true, "archive_sweep": true, "events": true,
 	} {
 		if capabilities[name] != want {
 			t.Errorf("capability %s = %v, want %v", name, capabilities[name], want)
@@ -69,27 +69,33 @@ func TestHealthReadinessMetaAndSections(t *testing.T) {
 	assertStrings(t, sections.ids(), []string{fixInbox, fixWork, fixHome}, "section ids")
 }
 
-// The three unrouted capabilities must be advertised false AND really absent.
-// A future PR that adds an endpoint has to flip the flag and delete the matching
-// 404 assertion in the same change.
-func TestUnroutedCapabilitiesAreAdvertisedAsFalseAndReallyAreAbsent(t *testing.T) {
+// Every advertised capability must really be routed. A flag that says true over
+// a 404 is a client building a button that can never work; a capability that is
+// removed has to flip its flag back in the same change.
+func TestAdvertisedCapabilitiesAreReallyRouted(t *testing.T) {
 	h := newHarness(t)
 	capabilities, _ := h.get("/api/v1/meta").dig("data", "capabilities").(map[string]any)
+	origin := map[string]string{"Origin": "http://127.0.0.1:4747"}
 
 	for capability, path := range map[string]string{
 		"undo": "/api/v1/history/undo", "redo": "/api/v1/history/redo",
 		"archive_sweep": "/api/v1/archive-sweeps",
 	} {
-		if capabilities[capability] != false {
-			t.Errorf("%s is advertised but has no endpoint", capability)
+		if capabilities[capability] != true {
+			t.Errorf("%s has an endpoint but is not advertised", capability)
 		}
-		if got := h.get(path).Status; got != 404 {
-			t.Errorf("GET %s = %d, so %s must be advertised true", path, got, capability)
-		}
-		posted := h.json("POST", path, "{}", map[string]string{"Origin": "http://127.0.0.1:4747"})
-		if posted.Status != 404 {
-			t.Errorf("POST %s = %d, so %s must be advertised true", path, posted.Status, capability)
-		}
+		// An empty body reaches the route's own validation, which is proof of
+		// dispatch: an unrouted path would be 404 before any body is read.
+		posted := h.json("POST", path, "{}", origin)
+		assertError(t, posted, 422, "validation_failed")
+	}
+	assertStatus(t, h.get("/api/v1/history"), 200)
+	assertStatus(t, h.get("/api/v1/archive-preview"), 200)
+	if capabilities["events"] != true {
+		t.Error("events has an endpoint but is not advertised")
+	}
+	if got := openAndCancelStream(t, h.server).Code; got != 200 {
+		t.Errorf("GET /events = %d", got)
 	}
 }
 

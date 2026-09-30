@@ -87,6 +87,12 @@ type Options struct {
 	// log line and the error envelope.
 	RequestIDs func() string
 	Clock      func() time.Time
+
+	// EventStreamLimit caps concurrently open /events streams; zero means the
+	// default. EventPollInterval and EventHeartbeat pace each open stream.
+	EventStreamLimit  int
+	EventPollInterval time.Duration
+	EventHeartbeat    time.Duration
 }
 
 // Server is the http.Handler. Everything it holds is immutable after
@@ -106,6 +112,9 @@ type Server struct {
 	// against the concurrency tests; the mutex is the whole fix, and it is held
 	// only around the write.
 	logMutex sync.Mutex
+
+	// streams is the /events budget and shutdown signal; see events.go.
+	streams *eventStreams
 }
 
 // New validates the options and builds a server.
@@ -146,7 +155,10 @@ func New(options Options) (*Server, error) {
 	for _, host := range hosts {
 		origins = append(origins, "http://"+host)
 	}
-	return &Server{options: options, allowedHosts: hosts, allowedOrigins: origins}, nil
+	return &Server{
+		options: options, allowedHosts: hosts, allowedOrigins: origins,
+		streams: newEventStreams(options.EventStreamLimit),
+	}, nil
 }
 
 func defaultRequestID() string {
@@ -170,6 +182,11 @@ type response struct {
 
 func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	requestID := s.options.RequestIDs()
+	if request.Method == http.MethodGet && request.URL.Path == eventsPath {
+		// A stream is not one shaped answer, so it writes for itself.
+		s.serveEvents(writer, request, requestID)
+		return
+	}
 	started := s.options.Clock()
 	route := routeName(request.URL.Path)
 
@@ -216,7 +233,11 @@ func (s *Server) write(writer http.ResponseWriter, answer response, requestID st
 	}
 	if answer.body == nil {
 		header.Del("content-type")
-		header.Set("content-length", "0")
+		// A 304 describes the representation it stands in for, so it must not
+		// claim that representation is empty.
+		if answer.status != http.StatusNotModified {
+			header.Set("content-length", "0")
+		}
 		writer.WriteHeader(answer.status)
 		return
 	}
@@ -283,6 +304,16 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		return s.createTask(request, requestID)
 	case method == http.MethodGet && path == explainPath:
 		return s.explainRecurrence(request)
+	case method == http.MethodGet && path == "/api/v1/history":
+		return s.getHistory(request)
+	case method == http.MethodPost && path == "/api/v1/history/undo":
+		return s.historyStep(request, -1, "undo")
+	case method == http.MethodPost && path == "/api/v1/history/redo":
+		return s.historyStep(request, 1, "redo")
+	case method == http.MethodGet && path == "/api/v1/archive-preview":
+		return s.archivePreview(request, requestID)
+	case method == http.MethodPost && path == "/api/v1/archive-sweeps":
+		return s.archiveSweep(request, requestID)
 	}
 
 	if match := taskPath.FindStringSubmatch(path); match != nil {
@@ -405,6 +436,8 @@ func validTaskID(value string) (string, error) {
 var literalRoutes = map[string]bool{
 	"/healthz": true, "/readyz": true, "/api/v1/meta": true, "/api/v1/sections": true,
 	"/api/v1/tasks": true, "/api/v1/projects": true, explainPath: true,
+	"/api/v1/history": true, "/api/v1/history/undo": true, "/api/v1/history/redo": true,
+	"/api/v1/archive-preview": true, "/api/v1/archive-sweeps": true, eventsPath: true,
 }
 
 // routeName is App#route_name: the templated path a log line names, so a log

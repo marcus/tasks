@@ -43,7 +43,106 @@ const (
 	// It is not HistoryEmpty: there may well be a step, and claiming otherwise
 	// would send the caller looking for a missing journal.
 	HistoryUnavailable HistoryOutcome = "unavailable"
+	// HistoryStale means the caller pinned the step to a store revision and
+	// the files have moved since: another surface wrote, so the step the
+	// caller saw labelled is no longer necessarily the one that would apply.
+	// Nothing was consulted beyond the schema gate and nothing was written.
+	HistoryStale HistoryOutcome = "stale_store_revision"
 )
+
+// HistoryPeek is what the next undo and redo would do, read without applying
+// either. A nil label is "nothing in that direction".
+//
+// The labels are the journal's plan, not a promise: a store edited out of band
+// after the journal's tip still peeks a label, and the step itself then refuses
+// as a conflict. StoreRevision is the revision the labels were read against,
+// which is exactly the precondition a guarded step takes.
+type HistoryPeek struct {
+	Undo          *string
+	Redo          *string
+	StoreRevision string
+	// UnsupportedSchema is set when this build cannot read the store; the
+	// journal is not consulted at all then, matching HistoryStep's order.
+	UnsupportedSchema bool
+	// Unavailable is the lock diagnostic when the peek could not be taken.
+	Unavailable string
+}
+
+// HistoryStepResult is one guarded undo or redo: the outcome, the label of the
+// step it concerned, and the store revision the caller should hold next — the
+// new revision after a step that applied, or the current one after a stale
+// refusal, so a client can re-peek without guessing.
+type HistoryStepResult struct {
+	Outcome       HistoryOutcome
+	Label         string
+	StoreRevision string
+}
+
+// PeekHistory plans both directions under the shared lock, so the two labels
+// and the revision describe one moment of the journal and the files.
+func (s *Store) PeekHistory() HistoryPeek {
+	var peek HistoryPeek
+	err := s.withSharedLock(func() error {
+		if source, _ := s.unsupportedSchemaSource(); source != "" {
+			peek = HistoryPeek{UnsupportedSchema: true}
+			return nil
+		}
+		history := s.journal()
+		if step, ok := history.Plan(-1); ok {
+			label := step.Label
+			peek.Undo = &label
+		}
+		if step, ok := history.Plan(1); ok {
+			label := step.Label
+			peek.Redo = &label
+		}
+		peek.StoreRevision = revisionOfSnapshot(s.FileSnapshot())
+		return nil
+	})
+	if err != nil {
+		return HistoryPeek{Unavailable: UnavailableMessage(err)}
+	}
+	return peek
+}
+
+// StoreRevision is the global revision of the two files as they are right now:
+// the same digest CheckedReadSnapshot reports, taken over the same bytes, but
+// without parsing, validating, or building a snapshot. It is what a change
+// poll or a conditional GET compares, and it is cheap precisely because it
+// asserts nothing about whether the bytes are valid.
+//
+// It takes the shared lock so the two files are read as one moment: an archive
+// sweep rewrites both, and a digest of the old live file beside the new
+// archive would name a state that never existed.
+func (s *Store) StoreRevision() (string, error) {
+	var revision string
+	err := s.withSharedLock(func() error {
+		revision = revisionOfSnapshot(s.FileSnapshot())
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return revision, nil
+}
+
+// revisionOfSnapshot is StoreRevisionForContents over a captured snapshot. An
+// absent half stays nil and an empty file stays a present empty slice, because
+// the digest distinguishes the two exactly as the checked read does.
+func revisionOfSnapshot(snapshot journal.Snapshot) string {
+	return StoreRevisionForContents(snapshotBytes(snapshot.Org), snapshotBytes(snapshot.Archive))
+}
+
+func snapshotBytes(text *string) []byte {
+	if text == nil {
+		return nil
+	}
+	raw := []byte(*text)
+	if raw == nil {
+		raw = []byte{}
+	}
+	return raw
+}
 
 // HistoryStep applies an undo (delta -1) or redo (delta +1) planned by the
 // journal, under the lock so the plan and its commit cannot race another
@@ -63,12 +162,32 @@ const (
 // that cannot finish leaves a stale cursor pointing at a step that still
 // exists rather than a committed cursor pointing at bytes that never landed.
 func (s *Store) HistoryStep(delta int) (HistoryOutcome, string) {
+	result := s.GuardedHistoryStep(delta, "")
+	return result.Outcome, result.Label
+}
+
+// GuardedHistoryStep is HistoryStep pinned to the store revision the caller
+// last saw. An empty expectedRevision is no precondition at all, which is
+// what the CLI and TUI pass: they act on the journal as it stands.
+//
+// The revision check sits between the schema gate and the plan. After the
+// schema gate because a store this build cannot read has no revision worth
+// comparing; before the plan because "nothing to undo" and "conflict" are
+// answers about a store the caller has not seen, and the honest answer to a
+// caller holding stale state is that it is stale.
+func (s *Store) GuardedHistoryStep(delta int, expectedRevision string) HistoryStepResult {
 	var outcome HistoryOutcome
-	var label string
+	var label, revision string
 	err := s.withLock(func() error {
 		if source, _ := s.unsupportedSchemaSource(); source != "" {
 			outcome = HistoryUnsupportedSchema
 			return nil
+		}
+		if expectedRevision != "" {
+			if current := revisionOfSnapshot(s.FileSnapshot()); current != expectedRevision {
+				outcome, revision = HistoryStale, current
+				return nil
+			}
 		}
 		history := s.journal()
 		step, ok := history.Plan(delta)
@@ -112,12 +231,13 @@ func (s *Store) HistoryStep(delta int) (HistoryOutcome, string) {
 			return nil
 		}
 		outcome = HistoryOK
+		revision = revisionOfSnapshot(s.FileSnapshot())
 		return nil
 	})
 	if err != nil {
-		return HistoryUnavailable, UnavailableMessage(err)
+		return HistoryStepResult{Outcome: HistoryUnavailable, Label: UnavailableMessage(err)}
 	}
-	return outcome, label
+	return HistoryStepResult{Outcome: outcome, Label: label, StoreRevision: revision}
 }
 
 // rollbackHistoryCursor puts the journal cursor back after a failed commit.

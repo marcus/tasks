@@ -83,14 +83,45 @@ paths:
       description: |
         Returns the enumerable vocabularies (states, priorities), config-derived
         limits (`max_depth`, `urgent_days`), server mode, and the global
-        `store_revision`. Never returns filesystem paths. Conditional polling of
-        this endpoint is the v1 default for change detection; see `/events`.
+        `store_revision`. Never returns filesystem paths.
+
+        This is the change-detection poll. The `ETag` is the quoted global store
+        revision, and a request whose `If-None-Match` names it (weak comparison,
+        so `W/"…"` matches; a comma-separated list matches when any member does)
+        is answered `304 Not Modified` with no body. The 304 is decided from a
+        digest of the two files alone — no parse, no validation, no snapshot —
+        so polling once a second is cheap. `If-None-Match: *` is honoured only
+        after a successful full read. The response carries
+        `Cache-Control: no-cache` (every other route is `no-store`), so a
+        browser `fetch()` revalidates automatically. Clients that can hold a
+        connection open may prefer `/events` when `capabilities.events` is true.
+
+        The document is a function of the store bytes and this process's fixed
+        configuration; clients refetch after reconnecting to a restarted API.
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          description: A store revision ETag previously returned by this endpoint.
+          schema: { type: string }
+          example: '"s1.6f2a9c0b"'
       responses:
+        "304":
+          description: |
+            The store has not changed since the supplied ETag. No body. Carries
+            the current `ETag` and `Cache-Control: no-cache`.
+          headers:
+            ETag:
+              description: The current global store revision (unchanged).
+              schema: { type: string }
         "200":
           description: Capabilities and current store revision.
           headers:
             ETag:
               description: Current global store revision, also present in `meta.store_revision`.
+              schema: { type: string }
+            Cache-Control:
+              description: "`no-cache`: store, but revalidate with If-None-Match before every use."
               schema: { type: string }
           content:
             application/json:
@@ -122,10 +153,10 @@ paths:
                       temporal_precision: "minute"
                       capabilities:
                         projects: true
-                        undo: false
-                        redo: false
-                        archive_sweep: false
-                        events: false
+                        undo: true
+                        redo: true
+                        archive_sweep: true
+                        events: true
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "503":
@@ -2408,7 +2439,13 @@ paths:
         Non-mutating. Returns the next undo and redo labels (or null when a
         direction is empty) plus the `store_revision` they apply to, so the
         client can render labeled controls and supply the right precondition to
-        undo/redo.
+        undo/redo. The labels are the shared journal's plan: when the files
+        were edited outside the journal after its tip, a label is still
+        returned and the step itself refuses with `journal_conflict`.
+
+        Does not require a structurally valid store (an undo is one way back
+        from a bad write); an unsupported schema version is refused. Same
+        document as `tasks history --json`.
       responses:
         "200":
           description: Undo/redo peek.
@@ -2441,6 +2478,8 @@ paths:
                       store_revision: "s1.6f2a9c0b"
                     meta:
                       store_revision: "s1.6f2a9c0b"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2452,7 +2491,10 @@ paths:
       description: |
         Reverts the shared journal's next undo step. The request must carry the
         `store_revision` the client last saw; a mismatch returns `409` instead
-        of undoing another surface's newer write.
+        of undoing another surface's newer write. The precondition is checked
+        under the store lock, after the schema gate and before the journal is
+        consulted, so a stale caller is told it is stale even when there is
+        nothing to undo. CLI equivalent: `tasks undo --store-revision REV --json`.
       requestBody:
         required: true
         content:
@@ -2527,9 +2569,15 @@ paths:
       operationId: archivePreview
       summary: Preview the next archive sweep.
       description: |
-        Returns the safe sweep preview (roots, descendant counts, blocked
-        roots) and an opaque `fingerprint`. A subsequent sweep must present the
-        same fingerprint.
+        Returns what the next sweep would move — closed roots, their
+        descendants, every moved record id — plus the closed roots it would
+        refuse because they still contain open work (each with its open
+        children, which is what the TUI's "Archive blocked" modal lists), and
+        an opaque `fingerprint`. A subsequent sweep must present the same
+        fingerprint. The fingerprint covers the moved records, their content,
+        and the day stamp they would carry, so a preview taken before local
+        midnight does not authorize a sweep after it. Same document as
+        `tasks archive --dry-run --json`.
       responses:
         "200":
           description: Sweep preview and fingerprint.
@@ -2539,32 +2587,39 @@ paths:
                 type: object
                 required: [data, meta]
                 properties:
-                  data:
-                    type: object
-                    required: [fingerprint, roots]
-                    properties:
-                      fingerprint:
-                        type: string
-                        description: Opaque token the sweep must match.
-                      roots:
-                        type: integer
-                        description: Number of closed roots the sweep would move.
-                      descendants:
-                        type: integer
-                      blocked:
-                        type: integer
-                        description: Closed roots whose subtree still holds open work.
+                  data: { $ref: "#/components/schemas/ArchivePreview" }
                   meta: { $ref: "#/components/schemas/ResponseMeta" }
               examples:
                 default:
                   value:
                     data:
-                      fingerprint: "sweep.a1b2c3"
-                      roots: 4
-                      descendants: 6
-                      blocked: 0
+                      roots: 1
+                      descendants: 1
+                      records: 2
+                      candidate_ids: ["aaaa0008", "bbbb0003"]
+                      open_descendants: 0
+                      blocked: []
+                      fingerprint: "3f0c9d…"
                     meta:
                       store_revision: "s1.6f2a9c0b"
+                blocked:
+                  value:
+                    data:
+                      roots: 1
+                      descendants: 1
+                      records: 2
+                      candidate_ids: ["ffff0001", "ffff0002"]
+                      open_descendants: 1
+                      blocked:
+                        - root_id: "ffff0001"
+                          root_title: "Closed parent"
+                          open_ids: ["ffff0002"]
+                          open_titles: ["Still open"]
+                      fingerprint: "9a41e2…"
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2575,8 +2630,17 @@ paths:
       summary: Sweep closed tasks into the archive when the preview still matches.
       description: |
         Moves the previewed closed tasks into `archive.jsonl` as one journal
-        entry, but only when the supplied `fingerprint` still matches the
-        current preview. A changed preview returns `409`.
+        entry (labelled `archive sweep`, so `/history/undo` reverts it), but only
+        when the supplied `fingerprint` still matches the current preview. A
+        write that does not change the moved set — editing an open task, say —
+        leaves the fingerprint valid. Every refusal is `409 conflict` whose
+        `details.reason` is the CLI's `reason` for the same refusal:
+        `preview_changed` (with the current `fingerprint`), `open_descendants`
+        (with `open_descendants` and the `blocked` rows), or `archive_conflict`
+        (with `conflicting_ids`: the archive already holds partial or differing
+        copies). A write that was rolled back is `503` with
+        `details.reason: write_failed`. CLI equivalent:
+        `tasks archive --fingerprint FP --json`.
       requestBody:
         required: true
         content:
@@ -2592,7 +2656,7 @@ paths:
             examples:
               default:
                 value:
-                  fingerprint: "sweep.a1b2c3"
+                  fingerprint: "3f0c9d…"
       responses:
         "200":
           description: Sweep applied. (200, not 201 — a sweep is an action with no addressable created resource.)
@@ -2602,23 +2666,19 @@ paths:
                 type: object
                 required: [data, meta]
                 properties:
-                  data:
-                    type: object
-                    required: [swept]
-                    properties:
-                      swept:
-                        type: integer
-                        description: Number of tasks moved to the archive.
+                  data: { $ref: "#/components/schemas/ArchiveSweepResult" }
                   meta: { $ref: "#/components/schemas/ResponseMeta" }
               examples:
                 default:
                   value:
                     data:
-                      swept: 10
+                      roots: 1
+                      records: 2
+                      moved_ids: ["aaaa0008", "bbbb0003"]
                     meta:
                       store_revision: "s1.9c3d4e5f"
         "409":
-          description: The preview changed.
+          description: The preview changed, a root is blocked, or the archive already holds conflicting copies.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2628,8 +2688,33 @@ paths:
                     error:
                       code: "conflict"
                       message: "The archive preview changed; refetch it and retry."
-                      details: { fingerprint: "sweep.a1b2c3" }
+                      details: { reason: "preview_changed", fingerprint: "9a41e2…" }
                       request_id: "req_8c3e"
+                open_descendants:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "Closed roots still contain open work; complete, cancel, move, or unnest it, then retry."
+                      details:
+                        reason: "open_descendants"
+                        open_descendants: 1
+                        blocked:
+                          - root_id: "ffff0001"
+                            root_title: "Closed parent"
+                            open_ids: ["ffff0002"]
+                            open_titles: ["Still open"]
+                      request_id: "req_8c3f"
+                archive_conflict:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The archive already holds partial or conflicting copies of the candidate ids; live tasks were preserved."
+                      details: { reason: "archive_conflict", conflicting_ids: ["aaaa0008"] }
+                      request_id: "req_8c40"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/ValidationFailed"
         "503":
@@ -2641,15 +2726,27 @@ paths:
       operationId: streamEvents
       summary: Server-sent store-change invalidation stream.
       description: |
-        A `text/event-stream` that emits a `store.changed` event whenever a CLI,
-        TUI, or API write replaces either file. The event payload carries the
-        new global `store_revision`; clients then refetch affected queries with
-        ordinary GETs. This is invalidation, not event sourcing.
+        A `text/event-stream` that emits a `store.changed` event whenever either
+        file's bytes change — a CLI, TUI, or API write, or an out-of-band edit.
+        The event payload carries the new global `store_revision`, which is also
+        the event `id`; clients then refetch affected queries with ordinary
+        GETs. This is invalidation, not event sourcing: several writes between
+        two polls produce one event.
 
-        SSE is deferred behind conditional polling of `/meta` in v1: every open
-        SSE response holds one server goroutine for its lifetime, so
-        the streaming path needs a sized thread budget before it ships. Polling
-        `/meta` (comparing `store_revision`) is the v1 default.
+        - The first frame carries the revision at connect time, so a client
+          that reconnects learns about changes it missed. A client that sends
+          `Last-Event-ID` equal to the current revision (EventSource does this
+          automatically) is not sent that first frame.
+        - The server polls the revision about once a second per stream and
+          writes a `: keep-alive` comment after 15 seconds of silence.
+        - Open streams are capped (8 by default). Beyond the cap, and while the
+          server is shutting down, the request is refused with `503
+          unavailable` (`details.reason: stream_limit`, `Retry-After`); fall
+          back to conditional polling of `/meta`.
+        - A stream ends when the client disconnects or the server shuts down.
+
+        Clients should prefer this stream when `capabilities.events` is true
+        and fall back to `If-None-Match` polling of `/meta` otherwise.
       responses:
         "200":
           description: An event stream.
@@ -2658,16 +2755,41 @@ paths:
               schema:
                 type: string
                 description: |
-                  SSE frames. Each `store.changed` event has a `data:` line whose
-                  JSON body is `{ "store_revision": "..." }`.
+                  SSE frames. Each `store.changed` event has an `id:` line (the
+                  revision) and a `data:` line whose JSON body is
+                  `{ "store_revision": "..." }`. Comment lines (`:`) are
+                  heartbeats and carry no data.
               examples:
                 store_changed:
                   summary: One store.changed frame.
                   value: |
+                    id: s1.8b2c3d4e
                     event: store.changed
                     data: {"store_revision":"s1.8b2c3d4e"}
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
-          $ref: "#/components/responses/StoreInvalid"
+          description: |
+            The stream budget is spent or the server is shutting down
+            (`details.reason: stream_limit` names the former), or the store
+            revision could not be read.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying (stream limit only).
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                stream_limit:
+                  value:
+                    error:
+                      code: "unavailable"
+                      message: "Too many open event streams; close one or poll /meta with If-None-Match."
+                      details: { reason: "stream_limit", limit: 8 }
+                      request_id: "req_5e6f"
 
   /healthz:
     servers:
@@ -2957,8 +3079,11 @@ components:
         matches (another surface wrote since it was observed), there is no
         step in that direction, or the journal refused the step because the
         files were edited out of band. `details.reason` distinguishes
-        `stale_store_revision`, `empty`, and `journal_conflict` for history
-        conflicts.
+        `stale_store_revision` (with the current `details.store_revision`),
+        `empty`, and `journal_conflict` (with the `details.label` it declined to
+        apply). The CLI's `undo`/`redo --json` refusals use the same words:
+        `reason` on a `conflict` error for the first and last, and the `empty`
+        error code for the middle.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2979,6 +3104,13 @@ components:
                   message: "Nothing to undo."
                   details: { reason: "empty" }
                   request_id: "req_1d2e"
+            journal_conflict:
+              value:
+                error:
+                  code: "conflict"
+                  message: "The task files changed outside the journal since that edit; refusing to undo it."
+                  details: { reason: "journal_conflict", label: "capture: Weekly review" }
+                  request_id: "req_1d2f"
     StoreInvalid:
       description: |
         The operation could not proceed against the backing store: the store is
@@ -3249,8 +3381,10 @@ components:
           description: |
             Feature flags for the running server. A capability is true only when
             its backing endpoints are routed by this server, not merely when the
-            store supports the operation. undo/redo/archive_sweep are false until
-            the manager endpoints (/history, /archive-sweeps) are implemented.
+            store supports the operation: `undo`/`redo` are `/history` and
+            `/history/{undo,redo}`, `archive_sweep` is `/archive-preview` and
+            `/archive-sweeps`, and `events` is the `/events` stream. Unknown
+            flags must be ignored.
           additionalProperties: { type: boolean }
 
     Section:
@@ -4225,6 +4359,69 @@ components:
           oneOf:
             - { type: string, minLength: 1 }
             - { type: array, minItems: 1, items: { type: string } }
+
+    ArchiveBlock:
+      type: object
+      description: A closed root the sweep refuses to move, with the open work under it.
+      required: [root_id, root_title, open_ids, open_titles]
+      additionalProperties: false
+      properties:
+        root_id: { $ref: "#/components/schemas/TaskId" }
+        root_title: { type: string }
+        open_ids:
+          type: array
+          items: { $ref: "#/components/schemas/TaskId" }
+        open_titles:
+          type: array
+          description: Titles of `open_ids`, in the same order.
+          items: { type: string }
+
+    ArchivePreview:
+      type: object
+      description: |
+        What the next sweep would move. The CLI's `archive --dry-run --json`
+        prints this exact document.
+      required: [roots, descendants, records, candidate_ids, open_descendants, blocked, fingerprint]
+      additionalProperties: false
+      properties:
+        roots:
+          type: integer
+          description: Closed roots the sweep would move (the count the CLI's human line reports).
+        descendants:
+          type: integer
+          description: Tasks beneath those roots.
+        records:
+          type: integer
+          description: Every record the sweep would move; the length of `candidate_ids`.
+        candidate_ids:
+          type: array
+          description: Every id the sweep would move, roots and descendants, in file order.
+          items: { $ref: "#/components/schemas/TaskId" }
+        open_descendants:
+          type: integer
+          description: Open tasks blocking the sweep, across every blocked root.
+        blocked:
+          type: array
+          description: Closed roots that still contain open work. Non-empty means the sweep will refuse.
+          items: { $ref: "#/components/schemas/ArchiveBlock" }
+        fingerprint:
+          type: string
+          description: Opaque token the sweep must match.
+
+    ArchiveSweepResult:
+      type: object
+      description: |
+        A completed sweep; the CLI's `archive --json` document, member for
+        member. `records` is the length of `moved_ids`. Deliberately not named
+        `archived`, which `POST /projects/{id}/archive` uses for its own count.
+      required: [roots, records, moved_ids]
+      additionalProperties: false
+      properties:
+        roots: { type: integer }
+        records: { type: integer }
+        moved_ids:
+          type: array
+          items: { $ref: "#/components/schemas/TaskId" }
 
     HistoryStepRequest:
       type: object
