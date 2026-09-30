@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **The TUI's tabs are readable over HTTP.** (#23) `GET /api/v1/views/{agenda,next,quadrants,inbox}` is now routed. Each returns the full Task resource for every row (revision included) in the view's canonical order, plus a defined `groups` layout that references those rows by id: the agenda's `overdue` / `today` / `tomorrow` / `later` day buckets in the server's zone, one `next` group per `@context` (a two-context task in both) with `(no context)`, all four quadrants `Q1`..`Q4` with their headings, and the intake tab's two blocks — Approvals in triage order, then the accepted Inbox — each grouped by project in the Projects view's order with unfiled last. `include_unavailable=true` mirrors the TUI's `Z` toggle. The selection and grouping rules moved out of the TUI into `internal/taskquery`, so the tabs and the route are computed by the same functions and a web client no longer ports them. `/meta` advertises `capabilities.views`, an unknown view name is a 404 that lists the routed ones, and an unrouted method or path now says "No endpoint matches that method and path." instead of "No task with that id."
+- **An outline read, and section actions on every section.** (#24) `GET /api/v1/views/outline` returns the Outline tab as one flat DFS list of nodes — sections and tasks interleaved in file order, each with its shown parent and depth — so a client can rebuild the tree exactly, including where a project's tasks sit relative to its sub-sections. Section nodes carry the section's role, note, lifecycle and task tallies (shown, open, closed, and the `· N closed` count the toggle is hiding); task nodes carry full Task resources; `include_closed=true` mirrors the TUI's `C` toggle, and proposals stay out as they do in the tab. `GET /api/v1/sections` now carries `kind`, `body`, `state` and `closed` too. The project action routes — rename, complete, drop, reopen, archive — accept any section the Outline shows, not only what `/projects` lists, so a nested sub-section or an area with no open work is no longer a 404 over HTTP while the TUI can act on it; the Inbox and the Projects heading refuse rename, close and archive with a 409 instead, and reopen always works.
+
 ## [1.17.0] - 2026-09-02
 
 ### Features
