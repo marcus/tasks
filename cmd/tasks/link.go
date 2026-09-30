@@ -2,7 +2,6 @@ package main
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/store"
@@ -94,20 +93,10 @@ func (s *surfaceContext) link(args []string) int {
 		"links: "+item.Title, "link", "failed to update links", flags["--json"])
 }
 
+// expandFormalLink is links.ExpandFormal over the configured shorthands — the
+// same rule application.ExpandFormalLink applies for the HTTP API.
 func (s *surfaceContext) expandFormalLink(raw string) (string, string, bool) {
-	if links.ValidFormalURL(raw) {
-		return raw, "", true
-	}
-	name, value, found := strings.Cut(raw, ":")
-	template, configured := s.paths.Links[name]
-	if !found || !configured || value == "" {
-		return "", "", false
-	}
-	expanded := links.Expand(value, template)
-	if !links.ValidFormalURL(expanded) {
-		return "", "", false
-	}
-	return expanded, raw, true
+	return links.ExpandFormal(raw, s.paths.Links)
 }
 
 func init() { register("link", (*surfaceContext).link) }

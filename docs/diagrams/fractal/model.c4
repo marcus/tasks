@@ -134,8 +134,8 @@ model {
     }
 
     routes = component 'Routes & Representation' {
-      description 'Explicit dispatch: health, meta (If-None-Match 304 from the revision digest), sections, tasks, activate, decisions, delegation, notes, projects and section actions, views (agenda, next, quadrants, inbox, outline), recurrence explain, history peek and revision-pinned undo/redo, fingerprint-pinned archive preview and sweep, and a capped /events SSE stream. Write responses carry meta.effects (recurrence roll, completion cascade).'
-      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/activate.go', 'internal/api/effects.go', 'internal/api/history.go', 'internal/api/events.go', 'internal/api/views.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
+      description 'Explicit dispatch: health, meta (If-None-Match 304 from the revision digest), sections, tasks, activate, decisions, delegation, notes, projects and section actions, views (agenda, next, quadrants, inbox, outline), the taskless previews (recurrence explain, date parse, lead explain), history peek and revision-pinned undo/redo, fingerprint-pinned archive preview and sweep, and a capped /events SSE stream. Write responses carry meta.effects (recurrence roll, completion cascade).'
+      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/parse.go', 'internal/api/write.go', 'internal/api/activate.go', 'internal/api/effects.go', 'internal/api/history.go', 'internal/api/events.go', 'internal/api/views.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
     }
 
     precondition = component 'ETag / If-Match Precondition' {
@@ -204,8 +204,8 @@ model {
       metadata { uid 'temporal' fractalColor '#D4A373' evidence ['internal/temporal/temporal.go', 'docs/adr/0010-temporal-values-and-time-zones.md'] }
 
       values = component 'Temporal Values & Context' {
-        description 'A stored value never moves; the context (now, zone, time format) turns it into an instant, a rendering, or a release decision. Fuzzy parsing.'
-        metadata { uid 'temporal.values' fractalColor '#D4A373' evidence ['internal/temporal/temporal.go', 'internal/temporal/parser.go', 'internal/temporal/dates.go'] }
+        description 'A stored value never moves; the context (now, zone, time format) turns it into an instant, a rendering, or a release decision. Fuzzy parsing, and the one free-text grammar (trailing zone and fold words) the TUI and the parse preview share.'
+        metadata { uid 'temporal.values' fractalColor '#D4A373' evidence ['internal/temporal/temporal.go', 'internal/temporal/parser.go', 'internal/temporal/dates.go', 'internal/temporal/text.go'] }
       }
 
       timezones = component 'Time Zone Resolution' {
@@ -220,13 +220,13 @@ model {
 
       lead = component 'Lead-Time Windows' {
         description 'How long before its anchor date a task becomes visible: calendar units gate at local midnight, the clock unit h gates on the instant.'
-        metadata { uid 'temporal.lead' fractalColor '#D4A373' evidence ['internal/lead/lead.go', 'internal/lead/parse.go'] }
+        metadata { uid 'temporal.lead' fractalColor '#D4A373' evidence ['internal/lead/lead.go', 'internal/lead/parse.go', 'internal/lead/explain.go'] }
       }
     }
 
     links = component 'Links' {
-      description 'Formal task links plus the one classifier for org-mode and bare URLs in text, so show, links, open, the TUI opener, and the API agree.'
-      metadata { uid 'platform.links' fractalColor '#6FA39C' evidence ['internal/links/links.go'] }
+      description 'Formal task links plus the one classifier for org-mode and bare URLs in text, so show, links, open, the TUI opener, and the API agree. Owns shorthand expansion and title-URL lifting for every write.'
+      metadata { uid 'platform.links' fractalColor '#6FA39C' evidence ['internal/links/links.go', 'internal/links/formal.go'] }
     }
   }
 
@@ -455,6 +455,7 @@ model {
   api.routes .calls core.temporal.lead 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-lead' } }
   api.routes .calls core.temporal.timezones 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-timezones' } }
   api.routes .calls core.links 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-links' } }
+  api.routes .calls core.temporal.values 'Parses friendly date previews' { metadata { uid 'routes-values' } }
   api.routes .calls api.seams 'Checked reads and multi-field PATCH' { metadata { uid 'routes-seams' } }
   api.routes .calls core.query.derivations 'Named views, the outline, and section roles' { metadata { uid 'routes-views' } }
   api.routes .renders jsonout 'Renders envelopes and resources' { metadata { uid 'routes-jsonout' } }
@@ -464,6 +465,7 @@ model {
   // Application internals
   core.application.commands .calls core.application.seam 'All persistence through the owned interface' { metadata { uid 'commands-seam' } }
   core.application.commands .calls core.temporal.values 'Parses dates against the operation clock' { metadata { uid 'commands-temporal' } }
+  core.application.commands .calls core.links 'Expands link shorthands and lifts a trailing title URL on create' { metadata { uid 'commands-links' } }
   core.application.commands .notifies core.application.outcomes 'Reports one outcome per operation' { metadata { uid 'commands-outcomes' } }
   core.application.readmodel .calls core.application.seam 'ReadSnapshot through the owned interface' { metadata { uid 'readmodel-seam' } }
   core.application.readmodel .calls core.query.derivations 'Queries over the same snapshot' { metadata { uid 'readmodel-views' } }

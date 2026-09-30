@@ -123,6 +123,8 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"  state     mv <ref> <STATE>       any state transition" + "\n" +
 	"  due          <ref> <date/time>   set/replace DEADLINE   (aka deadline, reschedule)" + "\n" +
 	"  schedule     <ref> <date/time>   set/replace Available from (SCHEDULED)" + "\n" +
+	"  due|schedule --explain \"<date>\" parse/preview a date, no task needed" + "\n" +
+	"                                   (trailing zone/floating/fold=later words ok)" + "\n" +
 	"  undate       <ref> [--kind deadline|scheduled]   remove date stamp(s)" + "\n" +
 	"  priority pri <ref> <A|B|C|none>  set/clear priority (incl. PROPOSED)" + "\n" +
 	"  retitle rename <ref> \"title\"     replace title (incl. PROPOSED)" + "\n" +
@@ -150,6 +152,7 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"                                   1m · 5h · \"a week\" · off (anchor = deadline" + "\n" +
 	"                                   if it has one, else Available from)" + "\n" +
 	"                 <ref>              read-only: the window and when it opens" + "\n" +
+	"                 --explain \"<span>\" [--anchor <date>]  preview, no task needed" + "\n" +
 	"  defer   snooze <ref> [date/time] defer until exact value; omitted means On Hold" + "\n" +
 	"  someday        <ref>             put on indefinite hold (Someday/Maybe)" + "\n" +
 	"  activate       <ref>             make available now (undefer, resume)" + "\n" +

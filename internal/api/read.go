@@ -117,6 +117,14 @@ func (s *Server) meta(request *http.Request) (response, error) {
 		w.KeyInt("time_format", s.options.TimeFormat)
 		w.KeyStr("tzdb_version", timezones.TZDBVersion())
 		w.KeyStr("temporal_precision", "minute")
+		w.KeyStr("date_order", s.options.DateOrder)
+		// The resolved link configuration, so a client can expand a shorthand
+		// or classify a URL exactly as a write and a read here would. These are
+		// config values (URL templates and hosts), never filesystem paths.
+		w.Key("link_shorthands")
+		writeStringMap(w, s.options.App.LinkShorthands())
+		w.Key("link_systems")
+		writeStringMap(w, s.options.App.LinkSystems())
 		w.Key("capabilities")
 		w.BeginObject()
 		// Capabilities advertise what THIS server routes, and every flag here
@@ -465,24 +473,25 @@ func (s *Server) getProject(request *http.Request, id string) (response, error) 
 // unreadable, and its envelope carries no store revision because no store was
 // read.
 func (s *Server) explainRecurrence(request *http.Request) (response, error) {
-	params, err := queryParams(request, "input", "count")
+	params, err := queryParams(request, "input", "count", "anchor")
 	if err != nil {
 		return response{}, err
 	}
-	if !params.Has("input") {
-		return response{}, validationError(reason("input", "is required"))
-	}
-	input := params.Get("input")
-	if strings.TrimSpace(input) == "" {
-		return response{}, validationError(reason("input", "must be non-empty text"))
+	input, err := requiredInput(params)
+	if err != nil {
+		return response{}, err
 	}
 	count, err := explainCount(params)
 	if err != nil {
 		return response{}, err
 	}
+	anchor, _, err := anchorParam(params)
+	if err != nil {
+		return response{}, err
+	}
 	context := s.options.TemporalContext()
 	today := context.LocalDate()
-	explanation := recur.Explain(input, recur.NewCivilDate(int64(today.Year), int(today.Month), today.Day), count, "")
+	explanation := recur.Explain(input, recur.NewCivilDate(int64(today.Year), int(today.Month), today.Day), count, anchor)
 
 	w := jsonout.New()
 	w.BeginObject()

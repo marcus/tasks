@@ -341,7 +341,8 @@ the human-readable tour of that contract.
 ## HTTP, still local
 
 - `GET /api/v1/meta`, `/sections`, `/tasks`, `/tasks/{id}`,
-  `/projects`, `/projects/{id}`, `/recurrence/explain`.
+  `/projects`, `/projects/{id}`, `/recurrence/explain` (optionally
+  from a task's `anchor`).
 - `GET /api/v1/views/{agenda,next,quadrants,inbox}`: the TUI tabs
   as full task resources plus their groups, with
   `include_unavailable` for the `Z` toggle.
@@ -359,6 +360,14 @@ the human-readable tour of that contract.
 - Writes report what they changed beyond the returned task:
   `meta.effects` names a recurrence roll or a completion cascade,
   and a cascade delete answers with `{deleted: [...]}`.
+- Taskless previews for form fields: `/dates/parse` reads `fri 4pm`
+  the way the TUI does and answers with the ISO date and time object a
+  write takes; `/lead/explain` previews a lead span and when its
+  window opens. CLI twins: `tasks due --explain`, `tasks lead
+  --explain`.
+- `POST /tasks` expands link shorthands (`jira:OPS-1234`) and lifts a
+  trailing title URL into a formal link, exactly as `tasks capture`
+  does; `/meta` publishes `date_order` and the link configuration.
 - `GET /history`, `POST /history/undo`, `POST /history/redo`.
 - Archive preview and sweep.
 - `/events` for store-change invalidation.

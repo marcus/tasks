@@ -74,6 +74,9 @@ type Options struct {
 	UrgentDays int
 	Timezone   string
 	TimeFormat int
+	// DateOrder is the configured reading of an ambiguous numeric date, `mdy`
+	// or `dmy`. The date parse preview honors it and /meta publishes it.
+	DateOrder string
 
 	// QueryOptions are the link shorthands and systems every read model built
 	// here is configured with, so an HTTP resource and `tasks links` classify a
@@ -134,6 +137,9 @@ func New(options Options) (*Server, error) {
 	if options.TimeFormat == 0 {
 		options.TimeFormat = 12
 	}
+	// Normalized through the parser's own reading, so /meta can never publish
+	// a spelling the parser would read as something else.
+	options.DateOrder = temporal.OrderNamed(options.DateOrder).String()
 	if options.RequestIDs == nil {
 		options.RequestIDs = defaultRequestID
 	}
@@ -314,6 +320,10 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		return s.archivePreview(request, requestID)
 	case method == http.MethodPost && path == "/api/v1/archive-sweeps":
 		return s.archiveSweep(request, requestID)
+	case method == http.MethodGet && path == datesParsePath:
+		return s.parseDate(request)
+	case method == http.MethodGet && path == leadExplainPath:
+		return s.explainLead(request)
 	}
 
 	if match := taskPath.FindStringSubmatch(path); match != nil {
@@ -450,6 +460,7 @@ var literalRoutes = map[string]bool{
 	"/api/v1/tasks": true, "/api/v1/projects": true, explainPath: true,
 	"/api/v1/history": true, "/api/v1/history/undo": true, "/api/v1/history/redo": true,
 	"/api/v1/archive-preview": true, "/api/v1/archive-sweeps": true, eventsPath: true,
+	datesParsePath: true, leadExplainPath: true,
 }
 
 // routeName is App#route_name: the templated path a log line names, so a log
