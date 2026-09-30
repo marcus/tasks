@@ -38,6 +38,10 @@ type ArchivePreview struct {
 	// Unavailable is set when the preview could not be taken. A zero Roots
 	// with this empty is a real empty sweep; with it set, nothing was read.
 	Unavailable string
+	// StoreRevision is the global revision of the bytes the preview was
+	// planned from, read under the same lock. It is informational: the pin
+	// that guards a sweep is the fingerprint, not this.
+	StoreRevision string
 }
 
 // Total is every task the sweep would move.
@@ -97,6 +101,11 @@ type ArchiveResult struct {
 	// Failed marks a sweep that WROTE and was rolled back. Live tasks were
 	// preserved; the reason is in LastRollback.
 	Failed bool
+	// StoreRevision is the global revision the sweep left behind, read under
+	// the sweep's own lock: the post-write revision after a sweep that moved
+	// something, and the unchanged one after an empty sweep. It is empty on
+	// every refusal and failure.
+	StoreRevision string
 }
 
 // OK reports a sweep that was allowed to run, whether or not it moved anything.
@@ -109,6 +118,7 @@ func (s *Store) ArchivePreviewFor(today string) ArchivePreview {
 	var preview ArchivePreview
 	if err := s.withSharedLock(func() error {
 		preview = archivePlanFor(freshRecords(s.org), today).preview
+		preview.StoreRevision = revisionOfSnapshot(s.FileSnapshot())
 		return nil
 	}); err != nil {
 		return ArchivePreview{Unavailable: UnavailableMessage(err)}
@@ -148,7 +158,7 @@ func (s *Store) ArchiveSweep(today string, expected *ArchivePreview) ArchiveResu
 			return nil
 		}
 		if len(plan.moved) == 0 {
-			result = ArchiveResult{Roots: 0, Preview: plan.preview}
+			result = ArchiveResult{Roots: 0, Preview: plan.preview, StoreRevision: revisionOfSnapshot(before)}
 			return nil
 		}
 
@@ -216,8 +226,11 @@ func (s *Store) ArchiveSweep(today string, expected *ArchivePreview) ArchiveResu
 			result = ArchiveResult{Failed: true, Preview: plan.preview}
 			return nil
 		}
-		s.journal().Record("archive sweep", before, s.fileSnapshot(), "", false)
-		result = ArchiveResult{Roots: plan.preview.Roots, Preview: plan.preview}
+		after := s.fileSnapshot()
+		s.journal().Record("archive sweep", before, after, "", false)
+		result = ArchiveResult{
+			Roots: plan.preview.Roots, Preview: plan.preview, StoreRevision: revisionOfSnapshot(after),
+		}
 		return nil
 	})
 	if err != nil {

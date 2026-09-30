@@ -115,7 +115,11 @@ tasks defer "<ref>" +4           # hide until available four days from today
 tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
 tasks activate "<ref>"           # make available now (undefer/resume)
 tasks archive                    # sweep DONE/CANCELLED to archive.jsonl; --json → {roots, records, moved_ids}
-tasks undo                       # revert the last mutation; --json → {action, label}
+tasks archive --dry-run --json   # preview: ids that would move, blocked roots + open children, fingerprint
+tasks archive --fingerprint <fp> # sweep only if the preview still matches what you reviewed
+tasks history --json             # next undo/redo labels + store_revision, without moving anything
+tasks undo                       # revert the last mutation; --json → {action, label, store_revision}
+tasks undo --store-revision <rev> # …only if nothing was written since `history` reported <rev>
 tasks redo                       # replay the last undone mutation; --json likewise
 tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); undoable
 ```

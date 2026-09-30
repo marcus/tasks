@@ -16,13 +16,24 @@ import (
 // rather than reporting a stale list. The day stamp on a moved record is part of
 // that fingerprint, so a sweep prepared either side of local midnight also
 // refuses — and retrying is always the right answer.
+//
+// `--dry-run` prints that preview instead of sweeping: counts, the ids that
+// would move, every blocked root with its open children, and the fingerprint.
+// `--fingerprint FP` then sweeps only while the preview still carries FP — the
+// same two-step contract as GET /archive-preview and POST /archive-sweeps, for
+// a caller that reviews the preview before committing to it.
 func (s *surfaceContext) archive(args []string) int {
-	flags, rest, err := takeFlags(args, "--json")
+	fingerprint, args, pinnedByCaller, status := takeFlagValue(args, "--fingerprint")
+	if status != 0 {
+		return status
+	}
+	flags, rest, err := takeFlags(args, "--json", "--dry-run")
 	if err != nil {
 		return abort(err.Error())
 	}
-	if len(rest) > 0 {
-		return abort("usage: tasks archive [--json]")
+	usage := "usage: tasks archive [--dry-run | --fingerprint FP] [--json]"
+	if len(rest) > 0 || (pinnedByCaller && (fingerprint == "" || flags["--dry-run"])) {
+		return abort(usage)
 	}
 	asJSON := flags["--json"]
 	if message := s.store.UnsupportedSchemaError(); message != "" {
@@ -35,18 +46,37 @@ func (s *surfaceContext) archive(args []string) int {
 	}
 
 	writer := s.writeStore()
-	var pinned *store.ArchivePreview
-	if asJSON {
+	if flags["--dry-run"] {
 		preview := writer.ArchivePreviewFor(today)
 		if preview.Unavailable != "" {
 			return archiveUnavailable(preview.Unavailable, asJSON)
 		}
-		pinned = &preview
+		return archiveDryRun(preview, asJSON)
 	}
-	result := writer.ArchiveSweep(today, pinned)
+
+	var pinned *store.ArchivePreview
+	var result store.ArchiveResult
+	if pinnedByCaller {
+		app, _, status := s.projectApplication()
+		if status != 0 {
+			return status
+		}
+		outcome, _ := app.ArchiveSweepMatching(fingerprint, nil)
+		result = outcome.ArchiveResult
+		pinned = &result.Preview
+	} else {
+		if asJSON {
+			preview := writer.ArchivePreviewFor(today)
+			if preview.Unavailable != "" {
+				return archiveUnavailable(preview.Unavailable, asJSON)
+			}
+			pinned = &preview
+		}
+		result = writer.ArchiveSweep(today, pinned)
+	}
 
 	if result.Refusal != store.ArchiveNotRefused {
-		return archiveRefused(result, asJSON)
+		return archiveRefused(result, asJSON, pinnedByCaller)
 	}
 	if result.Failed {
 		message := "archive failed; live tasks were preserved"
@@ -84,10 +114,76 @@ func (s *surfaceContext) archive(args []string) int {
 	return 0
 }
 
+// archiveDryRun prints the preview a sweep would act on. It exits 0 even when
+// roots are blocked: a preview that shows the blockage has answered the
+// question it was asked, and the sweep itself is what refuses.
+func archiveDryRun(preview store.ArchivePreview, asJSON bool) int {
+	if asJSON {
+		out(archivePreviewDocument(preview))
+		return 0
+	}
+	if preview.Roots == 0 {
+		out("Nothing to archive (no DONE/CANCELLED items).")
+		return 0
+	}
+	out(fmt.Sprintf("Would archive %d item%s and %d descendant%s to archive.jsonl.",
+		preview.Roots, plural(preview.Roots), preview.Descendants, plural(preview.Descendants)))
+	if preview.Blocked() {
+		has := "s have"
+		if preview.BlockedRoots() == 1 {
+			has = " has"
+		}
+		out(fmt.Sprintf("Blocked: %d closed root%s %d open descendant%s, so `tasks archive` would refuse.",
+			preview.BlockedRoots(), has, preview.OpenDescendants(), plural(preview.OpenDescendants())))
+		for _, block := range preview.Blocks {
+			out("  " + rubyInspectQuote(block.RootTitle) + ": " + strings.Join(block.OpenTitles, ", "))
+		}
+	}
+	return 0
+}
+
+// archivePreviewDocument is the preview in the same members GET
+// /api/v1/archive-preview answers with: `records` counts `candidate_ids`, and
+// `blocked` rows are the ones the open_descendants refusal carries.
+func archivePreviewDocument(preview store.ArchivePreview) string {
+	candidates := preview.CandidateIDs
+	if candidates == nil {
+		candidates = []string{}
+	}
+	w := jsonWriter()
+	w.BeginObject()
+	w.KeyInt("roots", preview.Roots)
+	w.KeyInt("descendants", preview.Descendants)
+	w.KeyInt("records", len(candidates))
+	w.Key("candidate_ids")
+	w.Strings(candidates)
+	w.KeyInt("open_descendants", preview.OpenDescendants())
+	w.Key("blocked")
+	writeArchiveBlocks(w, preview.Blocks)
+	w.KeyStr("fingerprint", preview.Fingerprint)
+	w.EndObject()
+	return w.String()
+}
+
+func writeArchiveBlocks(w *jsonout.Writer, blocks []store.ArchiveBlock) {
+	w.BeginArray()
+	for _, block := range blocks {
+		w.BeginObject()
+		w.KeyStr("root_id", block.RootID)
+		w.KeyStr("root_title", block.RootTitle)
+		w.Key("open_ids")
+		w.Strings(block.OpenIDs)
+		w.Key("open_titles")
+		w.Strings(block.OpenTitles)
+		w.EndObject()
+	}
+	w.EndArray()
+}
+
 // archiveRefused reports the sweep's safety gates in both dialects. Each refusal
 // names the same fix in prose and carries the CLI's `conflict` error code plus a
 // stable `reason`, so a caller branches on one shape across every surface.
-func archiveRefused(result store.ArchiveResult, asJSON bool) int {
+func archiveRefused(result store.ArchiveResult, asJSON, pinnedByCaller bool) int {
 	preview := result.Preview
 	switch result.Refusal {
 	case store.ArchiveConflict:
@@ -104,10 +200,19 @@ func archiveRefused(result store.ArchiveResult, asJSON bool) int {
 		return abort(message)
 
 	case store.ArchivePreviewChanged:
-		// Only the --json path pins a preview, so only it can see this.
+		// Only a pinned sweep can see this: --json pins its own preview, and
+		// --fingerprint pins the one the caller reviewed.
 		message := "Archive refused: tasks.jsonl changed while the sweep was being prepared. Retry."
+		if pinnedByCaller {
+			message = "Archive refused: the archive preview changed since that fingerprint. " +
+				"Review `tasks archive --dry-run` again, then retry with its fingerprint."
+		}
 		if asJSON {
-			out(archiveErrorDocument("preview_changed", message, nil))
+			var extra func(*jsonout.Writer)
+			if pinnedByCaller {
+				extra = func(w *jsonout.Writer) { w.KeyStr("fingerprint", preview.Fingerprint) }
+			}
+			out(archiveErrorDocument("preview_changed", message, extra))
 		}
 		return abort(message)
 
@@ -137,18 +242,7 @@ func archiveRefused(result store.ArchiveResult, asJSON bool) int {
 			out(archiveErrorDocument("open_descendants", message, func(w *jsonout.Writer) {
 				w.KeyInt("open_descendants", preview.OpenDescendants())
 				w.Key("blocked")
-				w.BeginArray()
-				for _, block := range preview.Blocks {
-					w.BeginObject()
-					w.KeyStr("root_id", block.RootID)
-					w.KeyStr("root_title", block.RootTitle)
-					w.Key("open_ids")
-					w.Strings(block.OpenIDs)
-					w.Key("open_titles")
-					w.Strings(block.OpenTitles)
-					w.EndObject()
-				}
-				w.EndArray()
+				writeArchiveBlocks(w, preview.Blocks)
 			}))
 		}
 		return abort(message)

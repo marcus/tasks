@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **The API routes the manager endpoints.** (#25) A web client can now do what the TUI's `u`, `ctrl-r` and `x` do without shelling out. `GET /api/v1/history` peeks the next undo and redo labels with the `store_revision` they apply to, and `POST /api/v1/history/undo` and `/redo` require that revision back, refusing with `409 conflict` (`details.reason: stale_store_revision`, with the current revision) when any surface wrote in between, so a stale browser tab can never undo someone else's edit; an exhausted journal and an out-of-band edit answer `empty` and `journal_conflict`. `GET /api/v1/archive-preview` lists the roots, descendants and every id a sweep would move, each blocked root with its open children, and a fingerprint; `POST /api/v1/archive-sweeps` moves them only while that fingerprint still holds, and every refusal carries the CLI's own `reason` word. The CLI gains the same two steps: `tasks history [--json]`, `undo`/`redo --store-revision REV`, `tasks archive --dry-run` and `archive --fingerprint FP`, with documents byte-identical to the HTTP `data`. The CLI and OpenAPI vocabularies are reconciled on the CLI's names (`{roots, records, moved_ids}`, a `blocked` row list), `undo --json` adds `store_revision`, and a journal conflict now carries `reason: journal_conflict`. `/meta` advertises `undo`, `redo` and `archive_sweep` as true.
+- **Change detection over HTTP is cheap, and can be pushed.** (#26) `GET /api/v1/meta` answers `If-None-Match` with `304` and no body, deciding from a digest of the two files without parsing, validating or snapshotting the store, and is served `Cache-Control: no-cache` so a browser `fetch()` revalidates on its own. `GET /api/v1/events` is live: a Server-Sent Events stream of `store.changed` frames carrying the new `store_revision` (also the event id, so a reconnecting `EventSource` is not told what it already knows), with a first frame on connect, a keep-alive comment when idle, at most eight open streams (`503`, `reason: stream_limit`, `Retry-After` beyond that), and a clean end on client disconnect or server shutdown. `capabilities.events` is true.
+
 ## [1.17.0] - 2026-09-02
 
 ### Features
