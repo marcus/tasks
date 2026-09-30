@@ -52,7 +52,7 @@ type Changeset struct {
 // THIS sequence rather than in the caller's, and a field outside the list sorts
 // last by name so the order is still total.
 var fieldOrder = []PatchField{
-	FieldTitle, FieldPriority, FieldLinks, FieldBody,
+	FieldTitle, FieldPriority, FieldLinks, FieldBody, FieldBodyAppend,
 	FieldContexts, FieldTags, FieldDeferred, FieldTagDelta,
 	FieldActivate,
 	FieldScheduled, FieldDeadline, FieldDateClear,
@@ -136,6 +136,9 @@ func validateChangeset(changeset Changeset, ordered []Change) []string {
 	}
 	if seen[FieldDateClear] && (seen[FieldScheduled] || seen[FieldDeadline]) {
 		errors = append(errors, "date_clear cannot be combined with scheduled or deadline")
+	}
+	if seen[FieldBodyAppend] && seen[FieldBody] {
+		errors = append(errors, "body_append cannot be combined with body")
 	}
 	if seen[FieldActivate] && (seen[FieldDeferred] || seen[FieldScheduled]) {
 		errors = append(errors, "activate cannot be combined with deferred or scheduled")
@@ -425,7 +428,14 @@ func (s *Store) ApplyChangeset(changeset Changeset) MutationResult {
 }
 
 // changesetLabel is `changeset_history_label`: the fields, in applied order.
+//
+// A lone activate is the one changeset every surface sends as a VERB rather
+// than as an edit, so its default names the verb the way `tasks activate`
+// does. That keeps the undo entry identical whichever surface asked.
 func changesetLabel(ordered []Change, title string) string {
+	if len(ordered) == 1 && ordered[0].Field == FieldActivate {
+		return "activate: " + title
+	}
 	names := make([]string, 0, len(ordered))
 	for _, change := range ordered {
 		names = append(names, string(change.Field))

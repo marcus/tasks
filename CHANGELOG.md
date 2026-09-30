@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **Activate a task over HTTP.** (#28) `POST /api/v1/tasks/{id}/activate` is `tasks activate` for API clients: no body, mandatory `If-Match`, the task back with its new ETag, one undo step. It runs the same application operation as the CLI (which now goes through it too), so it keeps a past available-from date, clears a future one, and on a lead or recurring task releases just this occurrence — none of which `PATCH {deferred: false, scheduled: null}` could express. A web client's defer control now has all three of the TUI's choices.
+- **Tag and note deltas on `PATCH`.** (#29) `add_tags`, `remove_tags`, `add_contexts`, `remove_contexts`, and `append_body` send the store's own deltas — the ones `tasks tag` and `tasks note` use — instead of making a client read, edit, and resend the whole list or body. They are refused (`422`) alongside the fields they edit. A PATCH made only of deltas may send `If-Match: *`, so a note appended from a web form lands beside an agent's concurrent priority edit instead of failing `412`; a real revision keeps its whole-task meaning, and `*` on anything else is `428`. Appending is now a store operation (`body_append`) composed under the lock, which `tasks note` also uses. A PATCH that only nulls dates now runs the store's single date-clear operation, the one `tasks undate` uses.
+- **Writes say what else they changed.** (#33) Task write responses carry an optional `meta.effects`: `rolled: {from, to}` when completing a recurring task rolled it forward instead of closing it, and `touched_ids` when a completion cascaded DONE over open descendants. Both come from the store's own report of the transaction, not from comparing reads. `DELETE ?cascade=true` now answers `200` with `{deleted: [...]}` — every removed task, root first, as it stood before the delete, the shape `tasks delete --json` reports; a plain delete still answers `204`.
+
 ## [1.17.0] - 2026-09-02
 
 ### Features

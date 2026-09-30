@@ -550,9 +550,13 @@ func patchState(records []record.Record, index int, value PatchValue, context pa
 		return patchInvalid("accepted work cannot remain under a proposed task")
 	}
 	if state == "DONE" && recur.Cookie(target.String("recur")) {
+		from := recurrenceAnchor(target)
 		outcome := advanceRecurrence(records, index, context)
 		if outcome.status == MutationOK {
-			outcome.summary = MutationSummary{Action: "recurrence_advanced", TaskID: target.String("id")}
+			outcome.summary = MutationSummary{
+				Action: ActionRecurrenceAdvanced, TaskID: target.String("id"),
+				From: from, To: recurrenceAnchor(records[index]),
+			}
 		}
 		return outcome
 	}
@@ -577,6 +581,21 @@ func patchState(records []record.Record, index int, value PatchValue, context pa
 		records[index].Delete("closed")
 	}
 	return patchOutcome{status: MutationOK, touchedIDs: touched}
+}
+
+// ActionRecurrenceAdvanced is the summary action of a DONE that rolled a
+// recurring task forward instead of closing it. The summary's From and To are
+// the anchor date before and after the roll — the deadline when the task has
+// one, else the available-from date, which is the store's own precedence — so a
+// surface can say where the task went without comparing snapshots.
+const ActionRecurrenceAdvanced = "recurrence_advanced"
+
+// recurrenceAnchor is the date a roll moves, as stored.
+func recurrenceAnchor(target record.Record) string {
+	if deadline := target.String("deadline"); deadline != "" {
+		return deadline
+	}
+	return target.String("scheduled")
 }
 
 // rollDelegationForward re-arms a marker onto the next occurrence: a human

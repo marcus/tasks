@@ -145,6 +145,9 @@ const (
 	FieldActivate PatchField = "activate"
 	// FieldDateClear is `undate`: both date fields in one checked write.
 	FieldDateClear PatchField = "date_clear"
+	// FieldBodyAppend is `note`: one line appended to the body under the lock,
+	// so an append never rewrites a body its caller did not see.
+	FieldBodyAppend PatchField = "body_append"
 )
 
 // dateOwningFields is Store::DATE_OWNING_FIELDS: the writes after which a
@@ -182,7 +185,10 @@ func fieldBaseline(records []record.Record, index int, field PatchField) (string
 		return string(stringArray(contextTags(semanticTags(parsed)))), nil
 	case FieldTags:
 		return string(stringArray(ordinaryTags(semanticTags(parsed)))), nil
-	case FieldBody:
+	case FieldBody, FieldBodyAppend:
+		// An append's baseline is the body it appends to. The changeset path
+		// sends none — the append is applied to whatever body the lock finds —
+		// while `tasks note` keeps its narrow check against the body it read.
 		return parsed.String("body"), nil
 	case FieldLinks:
 		raw := fieldRaw(parsed, "links")
@@ -362,6 +368,21 @@ func patchBody(records []record.Record, index int, value PatchValue) patchOutcom
 		return patchInvalid("body must be text")
 	}
 	records[index].SetOptional("body", record.RawString(value.text))
+	return patchOK(records[index])
+}
+
+// patchBodyAppend is the note delta: the text becomes the body's last line, or
+// the whole body when there is none. It is composed HERE, against the body the
+// lock holds, which is what lets two appends from two clients both land.
+func patchBodyAppend(records []record.Record, index int, value PatchValue) patchOutcome {
+	if value.kind != kindText {
+		return patchInvalid("note must be text")
+	}
+	if value.text == "" {
+		return patchInvalid("note cannot be empty")
+	}
+	records[index].SetOptional("body", record.RawString(
+		appendBodyLine(records[index].String("body"), value.text)))
 	return patchOK(records[index])
 }
 
@@ -950,7 +971,7 @@ var patchableFields = map[PatchField]bool{
 	FieldDeadline: true, FieldRecurrence: true, FieldLead: true, FieldContexts: true,
 	FieldTags: true, FieldBody: true, FieldState: true, FieldLocation: true,
 	FieldLinks:    true,
-	FieldTagDelta: true, FieldActivate: true, FieldDateClear: true,
+	FieldTagDelta: true, FieldActivate: true, FieldDateClear: true, FieldBodyAppend: true,
 }
 
 // Patch is the typed entry point. It shares one transaction with every other
@@ -1132,6 +1153,8 @@ func applyFieldPatch(records []record.Record, index int, field PatchField, value
 		return patchTagDelta(records, index, value)
 	case FieldBody:
 		return patchBody(records, index, value)
+	case FieldBodyAppend:
+		return patchBodyAppend(records, index, value)
 	case FieldLinks:
 		return patchLinks(records, index, value)
 	case FieldState:

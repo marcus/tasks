@@ -286,16 +286,32 @@ func (s *surfaceContext) changesetAndReport(args []string, item store.Item, chan
 	if status != 0 {
 		return status
 	}
+	return s.revisionWriteAndReport(args, item, func(writer *store.Store, revision string) store.MutationResult {
+		return writer.ApplyChangeset(store.Changeset{
+			ID: item.ID, Changes: changes, ExpectedRevision: revision,
+			HistoryLabel: label, Today: today, Context: context,
+		})
+	}, action, summary, asJSON, report)
+}
+
+// revisionWriteAndReport is changesetAndReport for a write that goes through an
+// operation of its own rather than a raw changeset — `activate`, which the CLI
+// and HTTP both reach through application.ActivateTask. The revision guard and
+// the report are the same; only who composes the write differs.
+func (s *surfaceContext) revisionWriteAndReport(args []string, item store.Item,
+	apply func(writer *store.Store, revision string) store.MutationResult,
+	action, summary string, asJSON bool, report func(store.MutationResult) int) int {
+
+	if item.ID == "" {
+		return abort("task has no stable id")
+	}
 	writer := s.writeStore()
 	revision, found := writer.TaskRevision(item.ID)
 	if !found || !editable(writer, item.ID) {
 		return mutationResultFailed(store.MutationResult{Status: store.MutationStale},
 			args, action, summary)
 	}
-	result := writer.ApplyChangeset(store.Changeset{
-		ID: item.ID, Changes: changes, ExpectedRevision: revision,
-		HistoryLabel: label, Today: today, Context: context,
-	})
+	result := apply(writer, revision)
 	if result.Status == store.MutationInvalid && result.FirstError() != "" {
 		return abort(result.FirstError())
 	}

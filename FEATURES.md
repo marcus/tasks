@@ -342,10 +342,16 @@ the human-readable tour of that contract.
 
 - `GET /api/v1/meta`, `/sections`, `/tasks`, `/tasks/{id}`,
   `/projects`, `/views/{name}`, `/recurrence/explain`.
-- Writes: create, patch, delete, approve, reject, delegate,
-  undelegate, claim, release, work_ref, delegation_note,
+- Writes: create, patch, delete, activate, approve, reject,
+  delegate, undelegate, claim, release, work_ref, delegation_note,
   project complete/archive. The delegation writes honour the same
   mandatory `If-Match` as every other task write.
+- `PATCH` takes tag and note deltas (`add_tags`, `remove_contexts`,
+  `append_body`, …); a delta-only patch may send `If-Match: *` and
+  land beside a concurrent edit instead of a 412.
+- Writes report what they changed beyond the returned task:
+  `meta.effects` names a recurrence roll or a completion cascade,
+  and a cascade delete answers with `{deleted: [...]}`.
 - `GET /history`, `POST /history/undo`, `POST /history/redo`.
 - Archive preview and sweep.
 - `/events` for store-change invalidation.
