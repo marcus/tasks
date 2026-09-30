@@ -106,7 +106,9 @@ type NamedViewResult struct {
 
 // NamedViewOptions are the reader's choices a view honours.
 type NamedViewOptions struct {
-	// UrgentDays is the quadrant urgency horizon; zero means the default.
+	// UrgentDays overrides the quadrant urgency horizon; zero means the read
+	// model's own configured window (WithUrgentDays), the one QuadrantFor
+	// classifies a single task against.
 	UrgentDays int
 	// IncludeUnavailable is the TUI's Z toggle: rows that are held, deferred
 	// or not yet startable are admitted instead of hidden. It never reaches
@@ -118,7 +120,11 @@ type NamedViewOptions struct {
 // that is not one.
 func (q *Queries) NamedView(name string, options NamedViewOptions) (NamedViewResult, bool) {
 	live := q.LiveItems()
-	query := NewViewQuery(name, q, options.UrgentDays, options.IncludeUnavailable, nil)
+	urgentDays := options.UrgentDays
+	if urgentDays <= 0 {
+		urgentDays = q.urgentDays
+	}
+	query := NewViewQuery(name, q, urgentDays, options.IncludeUnavailable, nil)
 	result := NamedViewResult{Name: name, Items: []store.Item{}, Groups: []ViewGroup{}}
 	switch name {
 	case ViewAgenda:

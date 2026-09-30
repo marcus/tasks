@@ -71,16 +71,18 @@ type Options struct {
 
 	Port       int
 	MaxDepth   int
-	UrgentDays int
 	Timezone   string
 	TimeFormat int
 	// DateOrder is the configured reading of an ambiguous numeric date, `mdy`
 	// or `dmy`. The date parse preview honors it and /meta publishes it.
 	DateOrder string
 
-	// QueryOptions are the link shorthands and systems every read model built
-	// here is configured with, so an HTTP resource and `tasks links` classify a
-	// URL the same way.
+	// QueryOptions are the link configuration and `urgent_days` window every
+	// read model built here is configured with, so an HTTP resource and
+	// `tasks links` classify a URL the same way. They are also the ONE source
+	// of `urgent_days`: /meta publishes the window they resolve to, and the
+	// views classify through the read model's own. Read must be built with
+	// the same options.
 	QueryOptions []taskquery.Option
 
 	// Logger receives one JSON line per request. nil disables logging.
@@ -118,6 +120,9 @@ type Server struct {
 
 	// streams is the /events budget and shutdown signal; see events.go.
 	streams *eventStreams
+
+	// urgentDays is the window QueryOptions resolve to, for /meta.
+	urgentDays int
 }
 
 // New validates the options and builds a server.
@@ -163,7 +168,8 @@ func New(options Options) (*Server, error) {
 	}
 	return &Server{
 		options: options, allowedHosts: hosts, allowedOrigins: origins,
-		streams: newEventStreams(options.EventStreamLimit),
+		streams:    newEventStreams(options.EventStreamLimit),
+		urgentDays: taskquery.ResolveUrgentDays(options.QueryOptions...),
 	}, nil
 }
 

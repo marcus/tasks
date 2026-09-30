@@ -42,8 +42,11 @@ func (s *Server) view(request *http.Request, name string) (response, error) {
 	if readErr != nil || !read.OK() {
 		return response{}, readFailure(read, readErr)
 	}
+	// No UrgentDays here: the view classifies against the read model's own
+	// configured window, the one every Task.quadrant in the same response
+	// comes from, so the groups and the rows can never disagree.
 	result, _ := read.Queries.NamedView(name, taskquery.NamedViewOptions{
-		UrgentDays: s.options.UrgentDays, IncludeUnavailable: *includeUnavailable,
+		IncludeUnavailable: *includeUnavailable,
 	})
 	resources := newResourceContext(read.Queries)
 	w := jsonout.New()

@@ -531,7 +531,7 @@ time is rejected, as are explicit wall-clock seconds, time-zone abbreviations,
 numeric offsets, unknown IANA zones, and nonexistent local times.
 
 The same three modifiers can also be written as trailing words — an IANA zone
-id, `UTC`, or `floating`, then optionally `fold=earlier` / `fold=later`
+id, `UTC` (any case), or `floating`, then optionally `fold=earlier` / `fold=later`
 (`fri 4pm Europe/Berlin`, `2026-11-01 01:30 America/New_York fold=later`). That
 is the only spelling a single text field has, so the TUI's date fields and
 `GET /dates/parse` use it, and `due`, `schedule`, `defer`, `capture
@@ -1298,9 +1298,10 @@ the command you reach for when you are already unsure.
 
 **API parity.** The HTTP adapter is JSON-only, so structured output is not a
 capability that can drift there — what can drift is which capabilities it routes
-at all. `GET /api/v1/meta` advertises that honestly (`capabilities.undo`,
-`.redo`, `.archive_sweep`, `.events`), and API adapter tests hold every flag to
-an endpoint the adapter really dispatches.
+at all. `GET /api/v1/meta` advertises that honestly (`capabilities.projects`,
+`.undo`, `.redo`, `.archive_sweep`, `.events`, `.views`, `.activate`,
+`.patch_deltas`, `.date_parse`, `.lead_explain`, `.outline`), and API adapter
+tests hold every flag to an endpoint the adapter really dispatches.
 
 **Manager vocabulary: one set of words on both surfaces.** The history and
 archive-sweep routes landed after the CLI's `--json` documents, and they adopt
@@ -1332,7 +1333,8 @@ while the HTTP routes require the precondition, because a remote caller's view
 may be stale by the time it clicks.
 
 **Change detection.** `GET /api/v1/meta` answers `If-None-Match` with `304` from
-a digest of the files alone, and `GET /api/v1/events` streams `store.changed`
+a digest of the files alone (its opaque ETag also covers the process's
+configuration and build, so a restart under new settings never 304s), and `GET /api/v1/events` streams `store.changed`
 frames carrying the new `store_revision`; see the OpenAPI for the stream budget
 and heartbeat. The CLI has no equivalent to either: a local caller reads
 `tasks history --json` (or any read) when it wants the current revision.

@@ -144,3 +144,44 @@ func TestSectionActionRefusalGuardsOnlyTheStructuralSections(t *testing.T) {
 		}
 	}
 }
+
+// The quadrants view and a task's own quadrant read ONE configured window: a
+// view asked without an explicit horizon classifies against the read model's
+// WithUrgentDays, so an HTTP view's groups can never disagree with the
+// Task.quadrant of the rows inside them.
+func TestQuadrantsViewUsesTheReadModelsUrgentDays(t *testing.T) {
+	const fixture = `{"type":"meta","version":2}
+{"type":"section","id":"a0000001","title":"Work"}
+{"type":"task","id":"b0000001","parent":"a0000001","state":"NEXT","title":"due in ten days","deadline":"2026-07-30"}
+`
+	for _, test := range []struct {
+		options []Option
+		want    string
+	}{
+		{nil, "Q4"},
+		{[]Option{WithUrgentDays(14)}, "Q3"},
+	} {
+		q := queriesAt(t, fixture, "2026-07-20T12:00:00Z", test.options...)
+		result, _ := q.NamedView(ViewQuadrants, NamedViewOptions{})
+		if len(result.Items) != 1 {
+			t.Fatalf("quadrants view items = %d, want 1", len(result.Items))
+		}
+		for _, group := range result.Groups {
+			for _, item := range group.Items {
+				own, _ := q.QuadrantFor(item)
+				if group.Key != test.want || own != test.want {
+					t.Errorf("options %d: group %s, Task quadrant %s, want %s", len(test.options), group.Key, own, test.want)
+				}
+			}
+		}
+	}
+	if got := ResolveUrgentDays(); got != DefaultUrgentDays {
+		t.Errorf("ResolveUrgentDays() = %d", got)
+	}
+	if got := ResolveUrgentDays(WithUrgentDays(0)); got != DefaultUrgentDays {
+		t.Errorf("ResolveUrgentDays(0) = %d", got)
+	}
+	if got := ResolveUrgentDays(WithLinkConfig(nil, nil), WithUrgentDays(14)); got != 14 {
+		t.Errorf("ResolveUrgentDays(14) = %d", got)
+	}
+}

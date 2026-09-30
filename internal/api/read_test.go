@@ -51,13 +51,17 @@ func TestHealthReadinessMetaAndSections(t *testing.T) {
 	capabilities, _ := meta.dig("data", "capabilities").(map[string]any)
 	for name, want := range map[string]bool{
 		"projects": true, "undo": true, "redo": true, "archive_sweep": true, "events": true,
+		"views": true, "activate": true, "patch_deltas": true, "date_parse": true,
+		"lead_explain": true, "outline": true,
 	} {
 		if capabilities[name] != want {
 			t.Errorf("capability %s = %v, want %v", name, capabilities[name], want)
 		}
 	}
+	// The /meta ETag is the store revision joined to a digest of the document,
+	// so it is never the bare revision; `meta.store_revision` stays the plain one.
 	revision, _ := meta.dig("meta", "store_revision").(string)
-	if meta.etag() != `"`+revision+`"` {
+	if !strings.HasPrefix(meta.etag(), `"`+revision+`.`) || meta.etag() == `"`+revision+`"` {
 		t.Errorf("meta etag = %q, store_revision = %q", meta.etag(), revision)
 	}
 	if strings.Contains(meta.Body, h.dir) {
@@ -91,11 +95,45 @@ func TestAdvertisedCapabilitiesAreReallyRouted(t *testing.T) {
 	}
 	assertStatus(t, h.get("/api/v1/history"), 200)
 	assertStatus(t, h.get("/api/v1/archive-preview"), 200)
-	if capabilities["events"] != true {
-		t.Error("events has an endpoint but is not advertised")
-	}
 	if got := openAndCancelStream(t, h.server).Code; got != 200 {
 		t.Errorf("GET /events = %d", got)
+	}
+
+	// The read routes answer 200 over the fixture.
+	for capability, path := range map[string]string{
+		"projects":     "/api/v1/projects",
+		"views":        "/api/v1/views/agenda",
+		"outline":      "/api/v1/views/outline",
+		"date_parse":   "/api/v1/dates/parse?input=tomorrow",
+		"lead_explain": "/api/v1/lead/explain?input=3d&anchor=2026-11-01",
+	} {
+		assertStatus(t, h.get(path), 200)
+		if capabilities[capability] != true {
+			t.Errorf("%s has an endpoint but is not advertised", capability)
+		}
+	}
+	// activate and the PATCH deltas are proven by landing them.
+	activated := h.json("POST", "/api/v1/tasks/"+fixPlants+"/activate", "", h.withIfMatch(h.etagOf(fixPlants)))
+	assertStatus(t, activated, 200)
+	delta := h.json("PATCH", "/api/v1/tasks/"+fixFlight, `{"add_tags":["probe"]}`, h.withIfMatch("*"))
+	assertStatus(t, delta, 200)
+
+	// Every flag the server publishes is one this test proves routed above; a
+	// new flag without a probe here fails rather than passing unexamined.
+	proven := map[string]bool{
+		"undo": true, "redo": true, "archive_sweep": true, "events": true, "projects": true,
+		"views": true, "outline": true, "date_parse": true, "lead_explain": true,
+		"activate": true, "patch_deltas": true,
+	}
+	for capability, value := range capabilities {
+		if value == true && !proven[capability] {
+			t.Errorf("capability %s is advertised but this test does not prove it routed", capability)
+		}
+	}
+	for capability := range proven {
+		if capabilities[capability] != true {
+			t.Errorf("%s is routed but not advertised", capability)
+		}
 	}
 }
 

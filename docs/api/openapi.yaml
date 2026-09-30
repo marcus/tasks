@@ -90,40 +90,52 @@ paths:
         limits (`max_depth`, `urgent_days`), server mode, and the global
         `store_revision`. Never returns filesystem paths.
 
-        This is the change-detection poll. The `ETag` is the quoted global store
-        revision, and a request whose `If-None-Match` names it (weak comparison,
-        so `W/"…"` matches; a comma-separated list matches when any member does)
-        is answered `304 Not Modified` with no body. The 304 is decided from a
-        digest of the two files alone — no parse, no validation, no snapshot —
-        so polling once a second is cheap. `If-None-Match: *` is honoured only
-        after a successful full read. The response carries
-        `Cache-Control: no-cache` (every other route is `no-store`), so a
-        browser `fetch()` revalidates automatically. Clients that can hold a
-        connection open may prefer `/events` when `capabilities.events` is true.
+        This is the change-detection poll. The `ETag` covers both halves of
+        what the response depends on: the global store revision and a digest
+        of the document itself (this process's configuration — zone, date
+        order, `urgent_days`, link config, delegation modes — its build, and
+        its capabilities). A request whose `If-None-Match` names it (weak
+        comparison, so `W/"…"` matches; a comma-separated list matches when
+        any member does) is answered `304 Not Modified` with no body. The 304
+        is decided from a digest of the two files alone — no parse, no
+        validation, no snapshot — so polling once a second is cheap.
+        `If-None-Match: *` is honoured only after a successful full read. The
+        response carries `Cache-Control: no-cache` (every other route is
+        `no-store`), so a browser `fetch()` revalidates automatically. Clients
+        that can hold a connection open may prefer `/events` when
+        `capabilities.events` is true.
 
-        The document is a function of the store bytes and this process's fixed
-        configuration; clients refetch after reconnecting to a restarted API.
+        Treat this ETag as opaque: send back exactly a value this endpoint
+        returned. It is not the bare store revision, so do not construct it
+        from `meta.store_revision` or from an `/events` frame — such a tag
+        never matches and is answered `200`. Because the configuration is part
+        of the tag, restarting the API with different settings answers the old
+        tag `200` even when the store bytes are unchanged.
       parameters:
         - name: If-None-Match
           in: header
           required: false
-          description: A store revision ETag previously returned by this endpoint.
+          description: An ETag previously returned by this endpoint, sent back verbatim.
           schema: { type: string }
-          example: '"s1.6f2a9c0b"'
+          example: '"s1.6f2a9c0b.3e1f0a9c2b7d"'
       responses:
         "304":
           description: |
-            The store has not changed since the supplied ETag. No body. Carries
-            the current `ETag` and `Cache-Control: no-cache`.
+            Neither the store nor the document has changed since the supplied
+            ETag. No body. Carries the current `ETag` and
+            `Cache-Control: no-cache`.
           headers:
             ETag:
-              description: The current global store revision (unchanged).
+              description: The current /meta entity tag (unchanged). Opaque.
               schema: { type: string }
         "200":
           description: Capabilities and current store revision.
           headers:
             ETag:
-              description: Current global store revision, also present in `meta.store_revision`.
+              description: |
+                Opaque /meta entity tag over the store revision and the
+                document. `meta.store_revision` is the plain store revision;
+                the tag is not, and is not derivable from it.
               schema: { type: string }
             Cache-Control:
               description: "`no-cache`: store, but revalidate with If-None-Match before every use."
@@ -168,6 +180,11 @@ paths:
                         archive_sweep: true
                         events: true
                         views: true
+                        activate: true
+                        patch_deltas: true
+                        date_parse: true
+                        lead_explain: true
+                        outline: true
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "503":
@@ -407,6 +424,7 @@ paths:
                         availability_reason: "available"
                         availability_blocker_id: null
                         available_at: null
+                        quadrant: "Q2"
                         recurrence: null
                         recurrence_human: null
                         lead: null
@@ -414,9 +432,12 @@ paths:
                         lead_opens: null
                         lead_opens_at: null
                         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                        created: "2026-07-14"
+                        updated: "2026-07-20T16:04:11Z"
                         closed: null
                         rejected: null
                         archived: false
+                        archived_on: null
                         project: "Work"
                         child_count: 0
                         descendant_count: 0
@@ -427,6 +448,7 @@ paths:
                             url: "https://github.com/acme/app/issues/12"
                             label: "acme/app#12"
                             source: "body"
+                        agent_ready: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "400":
@@ -522,6 +544,7 @@ paths:
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -529,15 +552,19 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: ["Captured 2026-07-14."]
+                      created: "2026-07-14"
+                      updated: "2026-07-14T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
                       delegation: null
                       formal_links: []
                       links: []
+                      agent_ready: false
                     meta:
                       store_revision: "s1.7a1b2c3d"
         "400":
@@ -637,6 +664,7 @@ paths:
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -644,9 +672,12 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
@@ -657,6 +688,7 @@ paths:
                           url: "https://github.com/acme/app/issues/12"
                           label: "acme/app#12"
                           source: "body"
+                      agent_ready: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "404":
@@ -710,9 +742,10 @@ paths:
 
         **Effects.** `meta.effects` reports what the write changed beyond the
         returned task: `rolled` when `state: DONE` rolled a recurring task
-        forward instead of closing it, and `touched_ids` when a completion
-        cascaded DONE over open descendants. It is omitted when there is
-        nothing to report.
+        forward instead of closing it, and `touched_ids` when the write changed
+        any task other than the returned one — a completion that cascaded DONE
+        over open descendants, or a move (`parent_id`/`placement`) that carried
+        descendants with it. It is omitted when there is nothing to report.
 
         Any live task may be patched, including a `PROPOSED` task. Presentation
         fields such as title, priority, body, tags, and contexts can therefore
@@ -832,6 +865,7 @@ paths:
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -839,27 +873,115 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
                       delegation: null
                       formal_links: []
                       links: []
+                      agent_ready: false
                     meta:
                       store_revision: "s1.8b2c3d4e"
                 completed_parent_meta:
-                  summary: "`meta` after `state: DONE` on a parent with open descendants (data elided)."
+                  summary: "`state: DONE` on a parent with open descendants: `touched_ids` names the parent and every descendant it closed."
                   value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.new-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6c"
+                      depth: 0
+                      state: "DONE"
+                      priority: "A"
+                      title: "Renew the vendor contract"
+                      contexts: ["@desk"]
+                      tags: ["billing"]
+                      deferred: false
+                      scheduled: null
+                      scheduled_time: null
+                      deadline: null
+                      deadline_time: null
+                      available: false
+                      availability_reason: "closed"
+                      availability_blocker_id: null
+                      available_at: null
+                      quadrant: null
+                      recurrence: null
+                      recurrence_human: null
+                      lead: null
+                      lead_human: null
+                      lead_opens: null
+                      lead_opens_at: null
+                      body: ["Captured 2026-07-14."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
+                      closed: "2026-07-20"
+                      rejected: null
+                      archived: false
+                      archived_on: null
+                      project: "Work"
+                      child_count: 2
+                      descendant_count: 2
+                      formal_links: []
+                      links: []
+                      delegation: null
+                      agent_ready: false
                     meta:
                       store_revision: "s1.9c3d4e5f"
                       effects:
                         touched_ids: ["3c4d5e6f", "4d5e6f7a", "5e6f7a8b"]
                 rolled_recurring_meta:
-                  summary: "`meta` after `state: DONE` on a weekly task (data elided; the task stays open)."
+                  summary: "`state: DONE` on a weekly task: it rolls forward and stays open, and `rolled` says so."
                   value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.new-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6d"
+                      depth: 0
+                      state: "NEXT"
+                      priority: null
+                      title: "Water the plants"
+                      contexts: ["@home"]
+                      tags: []
+                      deferred: false
+                      scheduled: null
+                      scheduled_time: null
+                      deadline: "2026-10-08"
+                      deadline_time: null
+                      available: true
+                      availability_reason: "available"
+                      availability_blocker_id: null
+                      available_at: null
+                      quadrant: "Q4"
+                      recurrence: "+1w"
+                      recurrence_human: "every week from the scheduled date"
+                      lead: null
+                      lead_human: null
+                      lead_opens: null
+                      lead_opens_at: null
+                      body: ["Captured 2026-07-14."]
+                      created: "2026-07-14"
+                      updated: "2026-07-20T16:04:11Z"
+                      closed: null
+                      rejected: null
+                      archived: false
+                      archived_on: null
+                      project: null
+                      child_count: 0
+                      descendant_count: 0
+                      formal_links: []
+                      links: []
+                      delegation: null
+                      agent_ready: false
                     meta:
                       store_revision: "s1.0d4e5f6a"
                       effects:
@@ -1390,6 +1512,7 @@ paths:
                       availability_reason: "available"
                       availability_blocker_id: null
                       available_at: null
+                      quadrant: "Q2"
                       recurrence: null
                       recurrence_human: null
                       lead: null
@@ -1397,9 +1520,12 @@ paths:
                       lead_opens: null
                       lead_opens_at: null
                       body: []
+                      created: null
+                      updated: "2026-07-20T16:04:11Z"
                       closed: null
                       rejected: null
                       archived: false
+                      archived_on: null
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
@@ -1410,6 +1536,7 @@ paths:
                         mode: "research"
                         status: "ready"
                         at: "2026-07-27T18:02:00Z"
+                      agent_ready: true
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "400": { $ref: "#/components/responses/MalformedRequest" }
@@ -1933,6 +2060,8 @@ paths:
                       stuck: false
                       held_count: 1
                       body: "Goal: ship the personal site."
+                      state: null
+                      closed: null
                       task_ids: ["cccc0005", "cccc0006", "cccc0008"]
                     meta:
                       store_revision: "s1.6f2a9c0b"
@@ -2000,6 +2129,8 @@ paths:
                       stuck: true
                       held_count: 0
                       body: null
+                      state: null
+                      closed: null
                       task_ids: ["cccc000b"]
                     meta:
                       store_revision: "s2.1a2b3c4d"
@@ -2413,7 +2544,7 @@ paths:
         read by the same parser the TUI's date fields use — a friendly date
         (`fri`, `next friday`, `in 2 weeks`, `aug 1`, `10/2`, ISO), an optional
         wall time (`4pm`, `09:30`, `noon`), then an optional zone word (an IANA
-        id, `UTC`, or `floating`) and an optional `fold=earlier` /
+        id, `UTC` in any case, or `floating`) and an optional `fold=earlier` /
         `fold=later`. Relative input is measured from now in the server's
         configured time zone, and an ambiguous numeric date follows
         `Meta.date_order`. The CLI twin is `tasks due --explain "<text>"`.
@@ -2654,6 +2785,7 @@ paths:
                           availability_reason: "available"
                           availability_blocker_id: null
                           available_at: null
+                          quadrant: "Q1"
                           recurrence: null
                           recurrence_human: null
                           lead: null
@@ -2661,18 +2793,22 @@ paths:
                           lead_opens: null
                           lead_opens_at: null
                           body: ["Captured 2026-07-14."]
+                          created: "2026-07-14"
+                          updated: "2026-07-20T16:04:11Z"
                           closed: null
                           rejected: null
                           archived: false
+                          archived_on: null
                           project: "Work"
                           child_count: 0
                           descendant_count: 0
                           delegation: null
                           formal_links: []
                           links: []
+                          agent_ready: false
                       groups:
-                        - { block: null, key: "overdue", label: "Overdue", task_ids: ["3c4d5e6f"] }
-                        - { block: null, key: "today", label: "Today", task_ids: [] }
+                        - { block: null, key: "overdue", label: "Overdue", task_ids: [] }
+                        - { block: null, key: "today", label: "Today", task_ids: ["3c4d5e6f"] }
                         - { block: null, key: "tomorrow", label: "Tomorrow", task_ids: [] }
                         - { block: null, key: "later", label: "Later", task_ids: [] }
                     meta:
@@ -2743,7 +2879,7 @@ paths:
                   meta: { $ref: "#/components/schemas/ResponseMeta" }
               examples:
                 default:
-                  summary: A project with a task and a nested sub-section (task resource abbreviated).
+                  summary: A project with a task and a nested sub-section.
                   value:
                     data:
                       name: "outline"
@@ -2789,7 +2925,48 @@ paths:
                           parent_id: "cccc0004"
                           depth: 2
                           section: null
-                          task: { id: "cccc0005", title: "Pick a static-site generator", state: "NEXT" }
+                          task:
+                            id: "cccc0005"
+                            revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                            source: "live"
+                            parent_id: null
+                            section_id: "cccc0004"
+                            depth: 0
+                            state: "NEXT"
+                            priority: "B"
+                            title: "Pick a static-site generator"
+                            contexts: ["@computer"]
+                            tags: []
+                            deferred: false
+                            scheduled: null
+                            scheduled_time: null
+                            deadline: null
+                            deadline_time: null
+                            available: true
+                            availability_reason: "available"
+                            availability_blocker_id: null
+                            available_at: null
+                            quadrant: "Q2"
+                            recurrence: null
+                            recurrence_human: null
+                            lead: null
+                            lead_human: null
+                            lead_opens: null
+                            lead_opens_at: null
+                            body: ["Captured 2026-07-10."]
+                            created: "2026-07-10"
+                            updated: "2026-07-10T15:30:00Z"
+                            closed: null
+                            rejected: null
+                            archived: false
+                            archived_on: null
+                            project: "Site launch"
+                            child_count: 0
+                            descendant_count: 0
+                            formal_links: []
+                            links: []
+                            delegation: null
+                            agent_ready: false
                         - kind: "section"
                           id: "cccc0007"
                           parent_id: "cccc0004"
@@ -2812,7 +2989,48 @@ paths:
                           parent_id: "cccc0007"
                           depth: 3
                           section: null
-                          task: { id: "cccc0008", title: "Draft the about page", state: "TODO" }
+                          task:
+                            id: "cccc0008"
+                            revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                            source: "live"
+                            parent_id: null
+                            section_id: "cccc0007"
+                            depth: 0
+                            state: "TODO"
+                            priority: null
+                            title: "Draft the about page"
+                            contexts: ["@computer"]
+                            tags: []
+                            deferred: false
+                            scheduled: null
+                            scheduled_time: null
+                            deadline: null
+                            deadline_time: null
+                            available: true
+                            availability_reason: "available"
+                            availability_blocker_id: null
+                            available_at: null
+                            quadrant: "Q4"
+                            recurrence: null
+                            recurrence_human: null
+                            lead: null
+                            lead_human: null
+                            lead_opens: null
+                            lead_opens_at: null
+                            body: ["Captured 2026-07-10."]
+                            created: "2026-07-10"
+                            updated: "2026-07-10T15:30:00Z"
+                            closed: null
+                            rejected: null
+                            archived: false
+                            archived_on: null
+                            project: "Site launch"
+                            child_count: 0
+                            descendant_count: 0
+                            formal_links: []
+                            links: []
+                            delegation: null
+                            agent_ready: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "400":
@@ -3472,7 +3690,11 @@ components:
                     at: "2026-07-27T18:04:11Z"
                   request_id: "req_7a8b"
     MissingPrecondition:
-      description: A required `If-Match` header was absent.
+      description: |
+        A required `If-Match` header was absent, or was `*`. The wildcard
+        asserts only that the task exists, which is a precondition only a
+        delta-only `PATCH` accepts; every other write needs the task's
+        revision.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -3484,6 +3706,13 @@ components:
                   message: "This write requires an If-Match header."
                   details: {}
                   request_id: "req_5e6f"
+            wildcard:
+              value:
+                error:
+                  code: "missing_precondition"
+                  message: "If-Match: * is accepted only on a PATCH whose members are all deltas (add_tags, remove_tags, add_contexts, remove_contexts, append_body); send the task's revision."
+                  details: {}
+                  request_id: "req_5e70"
     ValidationFailed:
       description: |
         A semantic value was invalid, or an unknown field was sent. `details`
@@ -3765,8 +3994,9 @@ components:
           type: array
           description: |
             Every task id the write changed, the returned task first. Present
-            only when that includes another task — a completion that cascaded
-            DONE over open descendants.
+            only when that includes a task other than the returned one — for
+            example a completion that cascaded DONE over open descendants, or a
+            move that carried descendants with it.
           items: { $ref: "#/components/schemas/TaskId" }
 
     Meta:
@@ -3776,7 +4006,7 @@ components:
                  closed_states, priorities, delegation_kinds, delegation_modes,
                  delegation_statuses, max_depth, urgent_days,
                  timezone, time_format, tzdb_version, temporal_precision,
-                 date_order, link_shorthands, link_systems]
+                 date_order, link_shorthands, link_systems, capabilities]
       additionalProperties: false
       properties:
         api_version: { type: string }
@@ -3853,12 +4083,48 @@ components:
           description: |
             Feature flags for the running server. A capability is true only when
             its backing endpoints are routed by this server, not merely when the
-            store supports the operation: `undo`/`redo` are `/history` and
-            `/history/{undo,redo}`, `archive_sweep` is `/archive-preview` and
-            `/archive-sweeps`, `events` is the `/events` stream, and `views` is
-            `GET /views/{name}` and `GET /views/outline`, so a client can tell a
-            missing route from an empty view. Unknown flags must be ignored.
+            store supports the operation, so a client can tell a missing route
+            from an empty answer. Feature-detect on these rather than on a
+            version: a server older than a feature omits its flag, and an absent
+            flag means false. Unknown flags must be ignored.
           additionalProperties: { type: boolean }
+          properties:
+            projects:
+              type: boolean
+              description: "`/projects` and the section actions under `/projects/{id}`."
+            undo:
+              type: boolean
+              description: "`GET /history` and `POST /history/undo`."
+            redo:
+              type: boolean
+              description: "`GET /history` and `POST /history/redo`."
+            archive_sweep:
+              type: boolean
+              description: "`GET /archive-preview` and `POST /archive-sweeps`."
+            events:
+              type: boolean
+              description: The `/events` Server-Sent Events stream.
+            views:
+              type: boolean
+              description: "`GET /views/{name}` (agenda, next, quadrants, inbox)."
+            activate:
+              type: boolean
+              description: "`POST /tasks/{id}/activate`."
+            patch_deltas:
+              type: boolean
+              description: |
+                `PATCH /tasks/{id}` accepts the delta members (`add_tags`,
+                `remove_tags`, `add_contexts`, `remove_contexts`,
+                `append_body`) and `If-Match: *` on a delta-only body.
+            date_parse:
+              type: boolean
+              description: "`GET /dates/parse`."
+            lead_explain:
+              type: boolean
+              description: "`GET /lead/explain`."
+            outline:
+              type: boolean
+              description: "`GET /views/outline`."
 
     Section:
       type: object
@@ -3885,9 +4151,8 @@ components:
             - { type: "null" }
         closed:
           description: Date the section was closed, null when open.
-          oneOf:
+          allOf:
             - { $ref: "#/components/schemas/IsoDate" }
-            - { type: "null" }
 
     SectionKind:
       type: string
@@ -3925,9 +4190,8 @@ components:
             - { type: string, enum: [DONE, CANCELLED] }
             - { type: "null" }
         closed:
-          oneOf:
+          allOf:
             - { $ref: "#/components/schemas/IsoDate" }
-            - { type: "null" }
         task_count:
           type: integer
           minimum: 0
@@ -4089,9 +4353,8 @@ components:
             - { type: "null" }
         closed:
           description: Date the section was closed, null when open.
-          oneOf:
+          allOf:
             - { $ref: "#/components/schemas/IsoDate" }
-            - { type: "null" }
         task_ids:
           type: array
           description: Ids of the rolled-up open, non-deferred tasks in DFS order.
@@ -4206,9 +4469,8 @@ components:
               description: |
                 Null for an all-day value; otherwise exactly the
                 `TaskTimeInput` a write accepts. `timezone: null` is floating.
-              oneOf:
+              allOf:
                 - { $ref: "#/components/schemas/TaskTimeInput" }
-                - { type: "null" }
             human:
               type: string
               description: |
@@ -5044,8 +5306,9 @@ components:
         append_body:
           description: |
             Text appended as the body's last line (or the whole body when it has
-            none); a list of lines is joined with newlines first. Must be
-            non-empty. Excludes `body`.
+            none); a list of lines is joined with newlines first. Must not be
+            blank: text that is empty or only whitespace is `422`, as
+            `tasks note` refuses it. Excludes `body`.
           oneOf:
             - { type: string, minLength: 1 }
             - { type: array, minItems: 1, items: { type: string } }

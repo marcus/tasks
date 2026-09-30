@@ -1487,18 +1487,30 @@ func (m *Model) temporalContext() temporal.Context {
 // the same one the CLI passes, so 10/2 means one day on every surface.
 func (m *Model) dateOrder() temporal.Order { return temporal.OrderNamed(m.paths.DateOrder) }
 
-// outcomeMessage is the user-visible sentence for a refused mutation: the
-// store's own words when it gave any, and the caller's fallback otherwise.
-// projectFailure is what a refused section action says: the shared refusal's
-// own sentence when the core turned it away (the Inbox and the Projects heading
-// cannot be renamed, closed or archived), and otherwise the section is gone.
+// projectFailure is what a refused section action says. Only a missing section
+// is "gone"; every other refusal says what actually happened — the shared
+// refusal's own sentence when the core turned it away (the Inbox and the
+// Projects heading cannot be renamed, closed or archived), or the store's own
+// words when it could not be read or locked, so an unavailable or invalid file
+// is never reported as a deleted project.
 func projectFailure(result application.Outcome) string {
-	if result.Conflict() {
-		return outcomeMessage(result, "project no longer exists")
+	if result.NotFound() {
+		return "project no longer exists"
 	}
-	return "project no longer exists"
+	fallback := "project action failed — try again"
+	switch result.Status {
+	case store.MutationStoreInvalid:
+		fallback = "task file is invalid — run `tasks check`"
+	case store.MutationUnsupportedSchema:
+		fallback = "task file schema is not supported by this build"
+	case store.MutationUnavailable:
+		fallback = "task store unavailable — try again"
+	}
+	return outcomeMessage(result, fallback)
 }
 
+// outcomeMessage is the user-visible sentence for a refused mutation: the
+// store's own words when it gave any, and the caller's fallback otherwise.
 func outcomeMessage(outcome application.Outcome, fallback string) string {
 	if len(outcome.Errors) > 0 {
 		return outcome.Errors[0]

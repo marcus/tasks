@@ -1,11 +1,14 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
+	"github.com/marcus/tasks/internal/buildinfo"
 	"github.com/marcus/tasks/internal/check"
 	"github.com/marcus/tasks/internal/jsonout"
 	"github.com/marcus/tasks/internal/query"
@@ -71,79 +74,122 @@ func (s *Server) meta(request *http.Request) (response, error) {
 	if _, err := queryParams(request); err != nil {
 		return response{}, err
 	}
+	// The document is config and build, never store content, so it is
+	// rendered before any read and its digest joins the store revision in the
+	// ETag. A 304 then answers "neither the store nor the document changed":
+	// restarting under a different zone, date order, link config or build
+	// changes the tag even when the store bytes did not.
+	document := s.metaDocument()
+	digest := metaDigest(document)
+
 	// Conditional polling: a matching If-None-Match is answered from the
-	// revision digest alone, without parsing or validating the store. Equal
-	// bytes under this process's fixed configuration yield an equal document
-	// and an equal verdict, so the 304 cannot hide a change a 200 would show.
+	// revision digest alone, without parsing or validating the store.
 	conditional := request.Header.Get("If-None-Match")
 	if conditional != "" {
-		if revision, err := s.options.App.StoreRevision(); err == nil && noneMatch(conditional, revision, false) {
-			return metaNotModified(revision), nil
+		if revision, err := s.options.App.StoreRevision(); err == nil &&
+			noneMatch(conditional, metaETagValue(revision, digest), false) {
+			return metaNotModified(revision, digest), nil
 		}
 	}
 	read, err := s.options.Read()
 	if err != nil || !read.OK() {
 		return response{}, readFailure(read, err)
 	}
-	if noneMatch(conditional, read.Revision, true) {
-		return metaNotModified(read.Revision), nil
+	if noneMatch(conditional, metaETagValue(read.Revision, digest), true) {
+		return metaNotModified(read.Revision, digest), nil
 	}
 	w := jsonout.New()
-	writeSuccess(w, func(w *jsonout.Writer) {
-		w.BeginObject()
-		w.KeyStr("api_version", "v1")
-		w.KeyStr("server_mode", "loopback")
-		w.Key("states")
-		w.Strings(taskquery.StateOrder())
-		w.Key("proposed_states")
-		w.Strings(metaProposedStates)
-		w.Key("open_states")
-		w.Strings(metaOpenStates)
-		w.Key("closed_states")
-		w.Strings(metaClosedStates)
-		w.Key("priorities")
-		w.Strings(metaPriorities)
-		w.Key("delegation_kinds")
-		w.Strings(metaDelegationKinds)
-		w.Key("delegation_modes")
-		// The mode vocabulary comes from the store this server writes through,
-		// read per request, never from a literal or a start-up snapshot.
-		w.Strings(s.options.App.DelegationModes().Modes())
-		w.Key("delegation_statuses")
-		w.Strings(metaDelegationStatues)
-		w.KeyInt("max_depth", s.options.MaxDepth)
-		w.KeyInt("urgent_days", s.options.UrgentDays)
-		w.KeyStr("timezone", s.options.Timezone)
-		w.KeyInt("time_format", s.options.TimeFormat)
-		w.KeyStr("tzdb_version", timezones.TZDBVersion())
-		w.KeyStr("temporal_precision", "minute")
-		w.KeyStr("date_order", s.options.DateOrder)
-		// The resolved link configuration, so a client can expand a shorthand
-		// or classify a URL exactly as a write and a read here would. These are
-		// config values (URL templates and hosts), never filesystem paths.
-		w.Key("link_shorthands")
-		writeStringMap(w, s.options.App.LinkShorthands())
-		w.Key("link_systems")
-		writeStringMap(w, s.options.App.LinkSystems())
-		w.Key("capabilities")
-		w.BeginObject()
-		// Capabilities advertise what THIS server routes, and every flag here
-		// is dispatched: projects, the history and archive-sweep manager
-		// endpoints, and the /events stream.
-		w.KeyBool("projects", true)
-		w.KeyBool("undo", true)
-		w.KeyBool("redo", true)
-		w.KeyBool("archive_sweep", true)
-		w.KeyBool("events", true)
-		w.KeyBool("views", true)
-		w.EndObject()
-		w.EndObject()
-	}, read.Revision)
+	writeSuccess(w, func(w *jsonout.Writer) { w.Raw(document) }, read.Revision)
 	return response{
-		status:  200,
-		headers: map[string]string{"etag": etag(read.Revision), "cache-control": metaCacheControl},
-		body:    w.Bytes(),
+		status: 200,
+		headers: map[string]string{
+			"etag": etag(metaETagValue(read.Revision, digest)), "cache-control": metaCacheControl,
+		},
+		body: w.Bytes(),
 	}, nil
+}
+
+// metaDocument renders the /meta `data` member. Nothing in it comes from the
+// store's CONTENT: it is this process's configuration, this build's
+// vocabularies and capabilities, and the delegation modes the store is
+// configured with.
+func (s *Server) metaDocument() []byte {
+	w := jsonout.New()
+	w.BeginObject()
+	w.KeyStr("api_version", "v1")
+	w.KeyStr("server_mode", "loopback")
+	w.Key("states")
+	w.Strings(taskquery.StateOrder())
+	w.Key("proposed_states")
+	w.Strings(metaProposedStates)
+	w.Key("open_states")
+	w.Strings(metaOpenStates)
+	w.Key("closed_states")
+	w.Strings(metaClosedStates)
+	w.Key("priorities")
+	w.Strings(metaPriorities)
+	w.Key("delegation_kinds")
+	w.Strings(metaDelegationKinds)
+	w.Key("delegation_modes")
+	// The mode vocabulary comes from the store this server writes through,
+	// read per request, never from a literal or a start-up snapshot. It is
+	// store CONFIGURATION, not store content, so it costs no read.
+	w.Strings(s.options.App.DelegationModes().Modes())
+	w.Key("delegation_statuses")
+	w.Strings(metaDelegationStatues)
+	w.KeyInt("max_depth", s.options.MaxDepth)
+	w.KeyInt("urgent_days", s.urgentDays)
+	w.KeyStr("timezone", s.options.Timezone)
+	w.KeyInt("time_format", s.options.TimeFormat)
+	w.KeyStr("tzdb_version", timezones.TZDBVersion())
+	w.KeyStr("temporal_precision", "minute")
+	w.KeyStr("date_order", s.options.DateOrder)
+	// The resolved link configuration, so a client can expand a shorthand
+	// or classify a URL exactly as a write and a read here would. These are
+	// config values (URL templates and hosts), never filesystem paths.
+	w.Key("link_shorthands")
+	writeStringMap(w, s.options.App.LinkShorthands())
+	w.Key("link_systems")
+	writeStringMap(w, s.options.App.LinkSystems())
+	w.Key("capabilities")
+	w.BeginObject()
+	// Capabilities advertise what THIS server routes, and every flag here is
+	// dispatched; TestAdvertisedCapabilitiesAreReallyRouted holds each one to
+	// it.
+	for _, capability := range metaCapabilities {
+		w.KeyBool(capability, true)
+	}
+	w.EndObject()
+	w.EndObject()
+	return w.Bytes()
+}
+
+// metaCapabilities are the feature flags /meta publishes, in document order. A
+// client feature-detects on these rather than on a version number, so each
+// later feature gets its own flag: an older binary simply omits it.
+var metaCapabilities = []string{
+	"projects", "undo", "redo", "archive_sweep", "events", "views",
+	"activate", "patch_deltas", "date_parse", "lead_explain", "outline",
+}
+
+// metaDigest is the short digest of the /meta document and the build that
+// rendered it. The build is included because a new binary can change what
+// the same config means without changing a byte of the document.
+func metaDigest(document []byte) string {
+	hash := sha256.New()
+	hash.Write([]byte(buildinfo.Version + "\x00" + buildinfo.Commit + "\x00"))
+	hash.Write(document)
+	return hex.EncodeToString(hash.Sum(nil))[:12]
+}
+
+// metaETagValue is the /meta entity tag: the store revision and the document
+// digest. Clients treat it as opaque; it is deliberately NOT the bare store
+// revision /events carries, so a tag built from an SSE frame never matches.
+func metaETagValue(revision, digest string) string {
+	if revision == "" {
+		return ""
+	}
+	return revision + "." + digest
 }
 
 // metaCacheControl lets a browser keep /meta and revalidate it on every use,
@@ -151,9 +197,9 @@ func (s *Server) meta(request *http.Request) (response, error) {
 // other route stays no-store.
 const metaCacheControl = "no-cache"
 
-func metaNotModified(revision string) response {
+func metaNotModified(revision, digest string) response {
 	return response{status: 304, headers: map[string]string{
-		"etag": etag(revision), "cache-control": metaCacheControl,
+		"etag": etag(metaETagValue(revision, digest)), "cache-control": metaCacheControl,
 	}}
 }
 

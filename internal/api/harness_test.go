@@ -204,7 +204,6 @@ func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bo
 		QueryOptions:    []taskquery.Option{},
 		Port:            4747,
 		MaxDepth:        4,
-		UrgentDays:      3,
 		Timezone:        "Etc/UTC",
 		TimeFormat:      12,
 		DateOrder:       h.dateOrder,

@@ -196,7 +196,6 @@ func buildServer(paths config.Paths, env determinism.Env, port int) (*api.Server
 		QueryOptions:    queryOptions,
 		Port:            port,
 		MaxDepth:        paths.MaxDepth,
-		UrgentDays:      paths.UrgentDays,
 		Timezone:        paths.Timezone,
 		TimeFormat:      paths.TimeFormat,
 		DateOrder:       paths.DateOrder,

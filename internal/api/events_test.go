@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/marcus/tasks/internal/taskquery"
 )
 
 // -- conditional GET on /meta ---------------------------------------------------
@@ -48,6 +50,62 @@ func TestMetaAnswersAMatchingIfNoneMatchWith304AndNoBody(t *testing.T) {
 	if changed.etag() == tag {
 		t.Fatal("a write did not change the meta ETag")
 	}
+}
+
+// The /meta body is a function of the store AND the process's configuration and
+// build, so a restart under different config must not be answered 304 against a
+// tag from before it, even though the store bytes are identical.
+func TestMetaETagChangesWithConfigurationOverTheSameStore(t *testing.T) {
+	h := newHarness(t)
+	before := h.get("/api/v1/meta")
+	assertStatus(t, before, 200)
+	tag := before.etag()
+	storeRevision, _ := before.dig("meta", "store_revision").(string)
+
+	for name, change := range map[string]func(*Options){
+		"timezone":    func(o *Options) { o.Timezone = "Europe/Berlin" },
+		"date_order":  func(o *Options) { o.DateOrder = "dmy" },
+		"time_format": func(o *Options) { o.TimeFormat = 24 },
+		"max_depth":   func(o *Options) { o.MaxDepth = 6 },
+		"urgent_days": func(o *Options) {
+			o.QueryOptions = append(append([]taskquery.Option{}, o.QueryOptions...), taskquery.WithUrgentDays(7))
+		},
+	} {
+		options := h.server.options
+		change(&options)
+		restarted, err := New(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest("GET", "/api/v1/meta", nil)
+		request.Host = "127.0.0.1:4747"
+		request.Header.Set("If-None-Match", tag)
+		restarted.ServeHTTP(recorder, request)
+		if recorder.Code != 200 {
+			t.Errorf("%s changed but the old tag was answered %d", name, recorder.Code)
+			continue
+		}
+		var body struct {
+			Meta struct {
+				StoreRevision string `json:"store_revision"`
+			} `json:"meta"`
+		}
+		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+		if body.Meta.StoreRevision != storeRevision {
+			t.Errorf("%s: store_revision = %q, want the unchanged %q", name, body.Meta.StoreRevision, storeRevision)
+		}
+		if recorder.Header().Get("etag") == tag {
+			t.Errorf("%s changed but the ETag did not", name)
+		}
+	}
+
+	// The bare store revision — what an /events frame carries — is not a /meta
+	// tag, so a client that builds one from an SSE frame gets a 200, never a
+	// stale 304.
+	bare := h.do(request{method: "GET", path: "/api/v1/meta",
+		headers: map[string]string{"If-None-Match": `"` + storeRevision + `"`}})
+	assertStatus(t, bare, 200)
 }
 
 // The 304 is the cheap path: it must not open a checked snapshot.

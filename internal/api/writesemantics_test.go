@@ -126,6 +126,12 @@ func TestActivateRefusals(t *testing.T) {
 	stale := h.etagOf(fixPlants)
 
 	assertError(t, h.json("POST", path, "", nil), 428, "missing_precondition")
+	// `*` is a PATCH-delta precondition only; here it is as good as absent.
+	wildcard := h.json("POST", path, "", h.withIfMatch("*"))
+	assertError(t, wildcard, 428, "missing_precondition")
+	if !strings.Contains(wildcard.message(), "delta") {
+		t.Errorf("wildcard refusal %q does not say what * is for", wildcard.message())
+	}
 	assertError(t, h.json("POST", path, `{"now":true}`, h.withIfMatch(stale)), 400, "malformed_request")
 	assertError(t, h.json("POST", path+"?force=true", "", h.withIfMatch(stale)), 422, "validation_failed")
 	assertError(t, h.json("POST", "/api/v1/tasks/deadbeef/activate", "", h.withIfMatch(stale)), 404, "not_found")
@@ -156,8 +162,27 @@ func TestPatchTagDeltasEditTheStoredSequence(t *testing.T) {
 	assertStatus(t, answered, 200)
 	assertStrings(t, stringsOf(answered.data()["tags"]), []string{"important", "travel"}, "tags")
 	assertStrings(t, stringsOf(answered.data()["contexts"]), []string{"@phone"}, "contexts")
-	if label := h.undoOnce(); label != "edit tag_delta: Book flight in Concur" {
-		t.Errorf("undo label = %q", label)
+	// The undo step names the operation the way `tasks tag` does.
+	if label := h.undoOnce(); label != "tags: Book flight in Concur" {
+		t.Errorf("undo label = %q, want the CLI's", label)
+	}
+}
+
+// A delta PATCH is labelled like the CLI verb it duplicates, and a mixed one
+// names the operations, never the store's internal field names.
+func TestDeltaPatchUndoLabelsMatchTheCLI(t *testing.T) {
+	h := newHarness(t)
+	assertStatus(t, h.json("PATCH", "/api/v1/tasks/"+fixTravel, `{"append_body":"Called back."}`,
+		h.withIfMatch("*")), 200)
+	if label := h.undoOnce(); label != "note: Travel desk reply" {
+		t.Errorf("append label = %q, want `tasks note`'s", label)
+	}
+	assertStatus(t, h.json("PATCH", "/api/v1/tasks/"+fixTravel, `{"append_body":"x","add_tags":["travel"]}`,
+		h.withIfMatch("*")), 200)
+	history := h.get("/api/v1/history")
+	if label, _ := history.dig("data", "undo").(string); strings.Contains(label, "_") ||
+		label != "edit note, tags: Travel desk reply" {
+		t.Errorf("mixed delta label = %q (history %s)", label, history.Body)
 	}
 }
 
@@ -198,6 +223,10 @@ func TestPatchDeltaRefusals(t *testing.T) {
 		{`{"add_tags":["defer"]}`, "add_tags"},
 		{`{"remove_contexts":["computer"]}`, "remove_contexts"},
 		{`{"append_body":""}`, "append_body"},
+		// Whitespace-only is blank, as `tasks note` treats it.
+		{`{"append_body":"   "}`, "append_body"},
+		{`{"append_body":"\n\t"}`, "append_body"},
+		{`{"append_body":["", "  "]}`, "append_body"},
 		{`{"append_body":[]}`, "append_body"},
 		{`{"append_body":null}`, "append_body"},
 		{`{"append_body":7}`, "append_body"},
@@ -235,6 +264,17 @@ func TestPatchWildcardPreconditionIsForDeltasOnly(t *testing.T) {
 	// A wildcard names no task that is not there.
 	assertError(t, h.json("PATCH", "/api/v1/tasks/deadbeef", `{"append_body":"x"}`, wildcard),
 		404, "not_found")
+
+	// Every other write refuses the wildcard with the same 428, never a 422.
+	before := string(h.storeBytes())
+	assertError(t, h.json("DELETE", "/api/v1/tasks/"+fixGarden, "", wildcard), 428, "missing_precondition")
+	assertError(t, h.json("DELETE", "/api/v1/tasks/"+fixPR+"?cascade=true", "", wildcard), 428, "missing_precondition")
+	assertError(t, h.json("POST", "/api/v1/tasks/"+fixPlants+"/activate", "", wildcard), 428, "missing_precondition")
+	assertError(t, h.json("POST", "/api/v1/tasks/"+fixFlight+"/delegate", `{"kind":"agent","mode":"research"}`,
+		wildcard), 428, "missing_precondition")
+	if string(h.storeBytes()) != before {
+		t.Fatal("a wildcard-refused write wrote")
+	}
 
 	accepted := h.json("PATCH", "/api/v1/tasks/"+fixTravel, `{"append_body":"x","add_tags":["travel"]}`, wildcard)
 	assertStatus(t, accepted, 200)
@@ -328,8 +368,8 @@ func TestPatchDateNullTakesTheUndateOperation(t *testing.T) {
 	if cleared.data()["deadline"] != nil || cleared.data()["recurrence"] != nil {
 		t.Errorf("deadline %v recurrence %v", cleared.data()["deadline"], cleared.data()["recurrence"])
 	}
-	if label := h.undoOnce(); label != "edit date_clear: Book flight in Concur" {
-		t.Errorf("undo label = %q, want the date-clear operation", label)
+	if label := h.undoOnce(); label != "remove deadline: Book flight in Concur" {
+		t.Errorf("undo label = %q, want `tasks undate --kind deadline`'s", label)
 	}
 
 	// Nulling a date the task does not carry stays a declarative no-op rather
@@ -378,6 +418,27 @@ func TestCompletingAParentReportsTheCascade(t *testing.T) {
 		[]string{fixPR, fixChild, fixGrand}, "touched_ids")
 	if answered.dig("meta", "effects", "rolled") != nil {
 		t.Errorf("no roll: %s", answered.Body)
+	}
+}
+
+// A move carries the subtree with it, and every descendant it relocated is a
+// task this write changed, so touched_ids names them as well.
+func TestMovingAParentReportsTheDescendantsItCarried(t *testing.T) {
+	h := newHarness(t)
+	answered := h.json("PATCH", "/api/v1/tasks/"+fixPR, `{"parent_id":"`+fixHome+`"}`,
+		h.withIfMatch(h.etagOf(fixPR)))
+	assertStatus(t, answered, 200)
+	if answered.data()["section_id"] != fixHome {
+		t.Fatalf("section_id = %v", answered.data()["section_id"])
+	}
+	assertStrings(t, stringsOf(answered.dig("meta", "effects", "touched_ids")),
+		[]string{fixPR, fixChild, fixGrand}, "touched_ids")
+	// A leaf move changes only the returned task, so there is nothing to add.
+	leaf := h.json("PATCH", "/api/v1/tasks/"+fixGarden, `{"parent_id":"`+fixHome+`"}`,
+		h.withIfMatch(h.etagOf(fixGarden)))
+	assertStatus(t, leaf, 200)
+	if leaf.dig("meta", "effects") != nil {
+		t.Errorf("a leaf move reports effects: %s", leaf.Body)
 	}
 }
 

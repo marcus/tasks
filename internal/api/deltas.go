@@ -103,8 +103,10 @@ func validatePatchDeltas(body *jsonObject) error {
 			}
 		}
 	}
+	// Blank is refused the way `tasks note` refuses it: a note of nothing but
+	// whitespace adds no information and would leave an invisible line behind.
 	if body.has("append_body") {
-		if text, ok := appendedText(body); !ok || text == "" {
+		if text, ok := appendedText(body); !ok || strings.TrimSpace(text) == "" {
 			return validationError(reason("append_body", "must be non-empty text or a non-empty list of text lines"))
 		}
 	}

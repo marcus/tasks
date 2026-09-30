@@ -109,6 +109,18 @@ func WithUrgentDays(days int) Option {
 	}
 }
 
+// ResolveUrgentDays is the window a read model built with these options
+// classifies against, for a surface that must publish it without a snapshot
+// in hand (the API's /meta). Resolving through the options themselves keeps it
+// one source: there is no second `urgent_days` to drift from Task.quadrant.
+func ResolveUrgentDays(options ...Option) int {
+	probe := &Queries{urgentDays: DefaultUrgentDays}
+	for _, option := range options {
+		option(probe)
+	}
+	return probe.urgentDays
+}
+
 type availabilityKey struct {
 	source store.Source
 	line   int

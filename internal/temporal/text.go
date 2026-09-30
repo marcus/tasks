@@ -51,9 +51,13 @@ func ParseText(text string, options ParseOptions) (Value, error) {
 			return Value{}, errors.New("the zone is given twice — use either --timezone/--floating or a trailing " + word)
 		}
 		tokens = tokens[:len(tokens)-1]
-		if word == "floating" {
+		switch {
+		case word == "floating":
 			options.Timezone, options.Floating = "", true
-		} else {
+		case strings.EqualFold(word, "UTC"):
+			// Spelled any way, it is the one canonical zone id.
+			options.Timezone, options.Floating = "UTC", false
+		default:
 			options.Timezone, options.Floating = word, false
 		}
 	}
@@ -65,7 +69,7 @@ func ParseText(text string, options ParseOptions) (Value, error) {
 // ("Europe/Berlin"); requiring a LETTER as well is what keeps a numeric date
 // ("7/15", "2026/07/15") from being mistaken for one and silently eaten.
 func zoneWord(token string) bool {
-	if token == "floating" || token == "UTC" {
+	if token == "floating" || strings.EqualFold(token, "UTC") {
 		return true
 	}
 	return strings.Contains(token, "/") && strings.IndexFunc(token, unicode.IsLetter) >= 0

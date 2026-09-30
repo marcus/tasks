@@ -16,6 +16,9 @@ func TestParseTextPeelsTheZoneAndFoldWordsOffTheEnd(t *testing.T) {
 		{"fri 4pm Europe/Berlin", Value{Date: Date{2026, 7, 24}, LocalTime: "16:00", Timezone: "Europe/Berlin"}},
 		{"fri 4pm floating", Value{Date: Date{2026, 7, 24}, LocalTime: "16:00"}},
 		{"fri 4pm UTC", Value{Date: Date{2026, 7, 24}, LocalTime: "16:00", Timezone: "UTC"}},
+		// The zone word is case-insensitive and stores the canonical spelling.
+		{"fri 4pm utc", Value{Date: Date{2026, 7, 24}, LocalTime: "16:00", Timezone: "UTC"}},
+		{"fri 4pm Utc", Value{Date: Date{2026, 7, 24}, LocalTime: "16:00", Timezone: "UTC"}},
 		{"2026-11-01 01:30 America/New_York fold=later",
 			Value{Date: Date{2026, 11, 1}, LocalTime: "01:30", Timezone: "America/New_York", Fold: 1}},
 		{"7/15", Value{Date: Date{2027, 7, 15}}},

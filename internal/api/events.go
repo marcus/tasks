@@ -206,14 +206,16 @@ func (s *Server) eventHeartbeat() time.Duration {
 	return defaultEventHeartbeat
 }
 
-// noneMatch reports whether an If-None-Match header names the revision.
+// noneMatch reports whether an If-None-Match header names the entity tag whose
+// unquoted value is `value` (for /meta, the revision joined to its document
+// digest).
 //
 // If-None-Match uses the weak comparison (RFC 9110 §13.1.2), so `W/"…"` matches
 // the strong tag this server issues, and a list of tags matches when any one
 // does. `*` matches any current representation, which is only known after a
 // successful read, so the cheap path ignores it and the full read decides.
-func noneMatch(header string, revision string, allowStar bool) bool {
-	if header == "" || revision == "" {
+func noneMatch(header string, value string, allowStar bool) bool {
+	if header == "" || value == "" {
 		return false
 	}
 	for _, candidate := range strings.Split(header, ",") {
@@ -225,7 +227,7 @@ func noneMatch(header string, revision string, allowStar bool) bool {
 			continue
 		}
 		tag = strings.TrimPrefix(tag, "W/")
-		if tag == etag(revision) {
+		if tag == etag(value) {
 			return true
 		}
 	}
