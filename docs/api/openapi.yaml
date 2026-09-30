@@ -2217,7 +2217,8 @@ paths:
 
         `tasks` is every row the view admits, each once, as full Task
         resources in the view's canonical order — the order `tasks <view>
-        --json` prints. `groups` is the layout: ordered buckets that reference
+        --json` prints, except that `inbox` also leads with the approvals block
+        the CLI's `tasks inbox` does not list. `groups` is the layout: ordered buckets that reference
         those rows by id, so a row can sit in several groups (a task with two
         contexts in `next`) without being repeated.
 
@@ -3378,31 +3379,51 @@ components:
         the reserved ones are recognised by title.
 
     OutlineSection:
-      description: A Section plus the outline's task tallies, all at any depth.
-      allOf:
-        - $ref: "#/components/schemas/Section"
-        - type: object
-          required: [task_count, open_task_count, closed_task_count, hidden_closed_count]
-          properties:
-            task_count:
-              type: integer
-              minimum: 0
-              description: Tasks beneath that this outline response shows — the TUI's section badge.
-            open_task_count:
-              type: integer
-              minimum: 0
-              description: Open (INBOX, TODO, NEXT, WAITING) tasks beneath, deferred included.
-            closed_task_count:
-              type: integer
-              minimum: 0
-              description: DONE and CANCELLED tasks beneath, shown or not.
-            hidden_closed_count:
-              type: integer
-              minimum: 0
-              description: |
-                Closed tasks and closed sections beneath that `include_closed=false`
-                is holding back — the TUI's `· N closed` marker. Zero when
-                `include_closed=true`.
+      type: object
+      description: |
+        The Section members plus the outline's task tallies, all at any depth.
+        Spelled out rather than composed with `allOf`, because Section is closed
+        (`additionalProperties: false`) and would reject the tallies.
+      required: [id, title, parent_id, kind, body, state, closed,
+                 task_count, open_task_count, closed_task_count, hidden_closed_count]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/TaskId" }
+        title: { type: string }
+        parent_id:
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        kind: { $ref: "#/components/schemas/SectionKind" }
+        body:
+          type: [string, "null"]
+        state:
+          oneOf:
+            - { type: string, enum: [DONE, CANCELLED] }
+            - { type: "null" }
+        closed:
+          oneOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+            - { type: "null" }
+        task_count:
+          type: integer
+          minimum: 0
+          description: Tasks beneath that this outline response shows — the TUI's section badge.
+        open_task_count:
+          type: integer
+          minimum: 0
+          description: Open (INBOX, TODO, NEXT, WAITING) tasks beneath, deferred included.
+        closed_task_count:
+          type: integer
+          minimum: 0
+          description: DONE and CANCELLED tasks beneath, shown or not.
+        hidden_closed_count:
+          type: integer
+          minimum: 0
+          description: |
+            Closed tasks and closed sections beneath that `include_closed=false`
+            is holding back — the TUI's `· N closed` marker. Zero when
+            `include_closed=true`.
 
     OutlineNode:
       type: object
@@ -3503,8 +3524,11 @@ components:
           enum: [project, area, list]
           description: |
             The Projects listing's vocabulary: `project`, `area`, or `list` for
-            a saved GTD list or — on a section action's response — any other
-            section the outline shows (a nested sub-section, the Inbox).
+            a saved GTD list. A section action's response on a section the
+            listing does not admit keeps that vocabulary rather than the finer
+            SectionKind: a nested sub-section and the Inbox read `list`, a
+            top-level area with no open work and the "Projects" heading read
+            `area`. `GET /views/outline` and `/sections` carry the exact role.
         open_count:
           type: integer
           minimum: 0

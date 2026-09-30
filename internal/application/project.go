@@ -66,14 +66,19 @@ func (a *Application) CreateProject(title string, operation *OperationContext) O
 }
 
 // RenameProject renames a project or area section. A blank title is invalid; a
-// missing section is not_found.
-func (a *Application) RenameProject(id, title string, _ *OperationContext) Outcome {
+// missing section is not_found; the Inbox and the Projects heading are a
+// conflict (see taskquery.SectionActionRefusal), as they are for complete, drop
+// and archive.
+func (a *Application) RenameProject(id, title string, operation *OperationContext) Outcome {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return invalid("title cannot be blank")
 	}
 	target := a.store()
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
+		return *refusal
+	}
+	if refusal := a.sectionRefusal(id, "rename", operation); refusal != nil {
 		return *refusal
 	}
 	writer, ok := target.(ProjectWriter)
@@ -115,6 +120,9 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 	}
 	if !found {
 		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	if refusal := a.sectionRefusal(id, "complete", operation); refusal != nil {
+		return *refusal
 	}
 	writer, ok := target.(ProjectWriter)
 	if !ok {
@@ -159,6 +167,9 @@ func (a *Application) DropProject(id string, operation *OperationContext) Outcom
 	}
 	if !found {
 		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	if refusal := a.sectionRefusal(id, "drop", operation); refusal != nil {
+		return *refusal
 	}
 	writer, ok := target.(ProjectWriter)
 	if !ok {
@@ -225,6 +236,30 @@ func (a *Application) ReopenProject(id string, operation *OperationContext) Outc
 	return Outcome{MutationResult: store.MutationResult{Status: store.MutationOK}}
 }
 
+// sectionRefusal is the shared structural refusal for one section action: the
+// Inbox and the Projects heading hold the file together, so a rename, close or
+// archive of either is a conflict whichever surface asked. It is nil when the
+// action may proceed, including when the id is not a live section at all —
+// the mutation's own not_found answers that.
+func (a *Application) sectionRefusal(id, action string, operation *OperationContext) *Outcome {
+	queries, err := a.Queries(false, operation)
+	if err != nil {
+		return &Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	}
+	role, found := queries.SectionKind(id)
+	if !found {
+		return nil
+	}
+	if refusal := taskquery.SectionActionRefusal(role, action); refusal != "" {
+		return &Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationConflict, Errors: []string{refusal},
+		}}
+	}
+	return nil
+}
+
 // SectionTarget is what a section action — rename, complete, drop, reopen,
 // archive — acts on: the rolled-up view a response reports, and the section's
 // structural role (taskquery.Section*), which decides whether the action is
@@ -284,6 +319,9 @@ func (a *Application) getSection(id string, operation *OperationContext) (taskqu
 func (a *Application) ArchiveProject(id string, operation *OperationContext) Outcome {
 	target := a.store()
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
+		return *refusal
+	}
+	if refusal := a.sectionRefusal(id, "archive", operation); refusal != nil {
 		return *refusal
 	}
 	writer, ok := target.(ProjectWriter)
