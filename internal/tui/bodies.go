@@ -350,17 +350,7 @@ func delegationAssignee(styler Styler, assignee string) string {
 
 // primaryDate is the deadline if there is one, else the available-from date.
 func primaryDate(queries *taskquery.Queries, item store.Item) (temporal.Date, string, temporal.Value, bool) {
-	if item.Deadline != "" {
-		if value, ok := queries.DeadlineValue(item); ok {
-			return value.Date, "deadline", value, true
-		}
-	}
-	if item.Scheduled != "" {
-		if value, ok := queries.ScheduledValue(item); ok {
-			return value.Date, "scheduled", value, true
-		}
-	}
-	return temporal.Date{}, "", temporal.Value{}, false
+	return queries.PrimaryDate(item)
 }
 
 func padRight(text string, width int) string {

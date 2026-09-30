@@ -64,7 +64,7 @@ tags:
   - name: recurrence
     description: Taskless schedule parsing and projection.
   - name: views
-    description: Canonical named selections (agenda, next, quadrants, inbox, projects).
+    description: The TUI's tabs as data — named selections with their groups (agenda, next, quadrants, inbox) and the outline.
   - name: history
     description: Shared undo/redo journal.
   - name: archive
@@ -157,6 +157,7 @@ paths:
                         redo: true
                         archive_sweep: true
                         events: true
+                        views: true
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "503":
@@ -173,7 +174,10 @@ paths:
       summary: Ordered live sections for capture and placement.
       description: |
         Live section records in display order. Sections carry the same checked
-        eight-hex ids as tasks. Archive sections are not returned.
+        eight-hex ids as tasks. Archive sections are not returned. Each
+        section carries its role (`kind`), its body note, and its lifecycle
+        pair, so a client can label the Inbox, the Projects heading, projects,
+        areas, saved lists and nested sub-sections without matching titles.
       responses:
         "200":
           description: Ordered sections.
@@ -194,9 +198,17 @@ paths:
                       - id: "1a2b3c4d"
                         title: "Inbox"
                         parent_id: null
+                        kind: "inbox"
+                        body: null
+                        state: null
+                        closed: null
                       - id: "9f8e7d6c"
                         title: "Work"
                         parent_id: null
+                        kind: "area"
+                        body: "Day job."
+                        state: null
+                        closed: null
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "503":
@@ -1877,6 +1889,9 @@ paths:
         Returns a single project or area by its section id. An id that is not a
         project or area (a task, Inbox, the Projects heading, a nested
         sub-section, or an area with no open work today) is `404`.
+        This read keeps the listing's vocabulary; the section actions below are
+        wider, and `GET /views/outline` carries every section with its role and
+        lifecycle.
       responses:
         "200":
           description: The project resource.
@@ -1920,12 +1935,15 @@ paths:
     patch:
       tags: [projects]
       operationId: renameProject
-      summary: Rename a project or area section.
+      summary: Rename a project, area, or any other section the outline shows.
       description: |
         Replaces the section title (leading/trailing whitespace trimmed). A
-        blank or missing `title` is `422`; an id that is not a project or area
-        (a task, Inbox, the "Projects" heading, a done-pile section) is `404`
-        before any write. A rename that moves an area out of scope (e.g.
+        blank or missing `title` is `422`. Like every section action, it takes
+        any live section id the outline shows — a nested sub-section, a saved
+        list, an area with no open work — not only what `/projects` lists; an
+        id that is not a live section (a task, an unknown id) is `404`, and the
+        Inbox and the "Projects" heading are `409` (see SectionActionRefused),
+        both before any write. A rename that moves an area out of scope (e.g.
         retitled "Inbox") still returns its `200` post-state, never a `404`
         after the write committed. Unlike task writes, project mutations carry
         no per-resource revision, so no `If-Match` precondition is required;
@@ -1975,6 +1993,8 @@ paths:
                       task_ids: ["cccc000b"]
                     meta:
                       store_revision: "s2.1a2b3c4d"
+        "409":
+          $ref: "#/components/responses/SectionActionRefused"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -2005,10 +2025,10 @@ paths:
         write as the tasks. Returns the project resource with its refreshed
         counts (`open_count` now 0); a completed area that no longer surfaces in
         the read model still returns its `200` post-state, never a `404` after
-        the write committed. An id that is not a project or area (a task, Inbox,
-        the "Projects" heading, a done-pile section) is `404` before any write.
-        The request takes no body. No `If-Match` precondition (see the rename
-        note).
+        the write committed. Any live section the outline shows is accepted (see
+        the rename note); a task or unknown id is `404` and the Inbox or the
+        "Projects" heading `409`, before any write. The request takes no body.
+        No `If-Match` precondition (see the rename note).
       responses:
         "200":
           description: The project resource after completion (open_count now 0).
@@ -2045,6 +2065,8 @@ paths:
                       task_ids: []
                     meta:
                       store_revision: "s2.1a2b3c4d"
+        "409":
+          $ref: "#/components/responses/SectionActionRefused"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -2067,9 +2089,11 @@ paths:
         with `409 conflict` while the project still has open work unless
         `force=true` — deferred/held tasks (`held_count`) count as open work
         too, so a parked-but-open project also refuses. The request takes no
-        body. No `If-Match` precondition (see the rename note). The project
-        resource is gone after this succeeds, so the response is a small archive
-        summary rather than a project.
+        body. No `If-Match` precondition (see the rename note). Any live section
+        the outline shows is accepted; a task or unknown id is `404`, and the
+        Inbox or the "Projects" heading is a `409` whatever `force` says. The
+        project resource is gone after this succeeds, so the response is a
+        small archive summary rather than a project.
       parameters:
         - name: force
           in: query
@@ -2101,11 +2125,22 @@ paths:
                     meta:
                       store_revision: "s2.1a2b3c4d"
         "409":
-          description: The project has open work without `force`.
+          description: |
+            The project has open work without `force`, or the section is the
+            Inbox or the "Projects" heading (see SectionActionRefused).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
               examples:
+                structural_section:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The Projects heading holds every project; it cannot be renamed, closed, or archived."
+                      details:
+                        id: "cccc0003"
+                        kind: "projects_root"
+                      request_id: "req_5e70"
                 open_tasks:
                   value:
                     error:
@@ -2138,7 +2173,9 @@ paths:
         `closed` date, `defer` dropped, and a recurring descendant retired. The
         section itself is stamped CANCELLED with today's `closed` date, in the
         same write as the tasks. Returns the project resource with its refreshed
-        counts. No `If-Match` precondition.
+        counts. Any live section the outline shows is accepted (see the rename
+        note); a task or unknown id is `404` and the Inbox or the "Projects"
+        heading `409`, before any write. No `If-Match` precondition.
       responses:
         "200":
           description: The project resource after dropping (open_count now 0).
@@ -2175,6 +2212,8 @@ paths:
                       task_ids: []
                     meta:
                       store_revision: "s2.1a2b3c4d"
+        "409":
+          $ref: "#/components/responses/SectionActionRefused"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -2193,7 +2232,9 @@ paths:
       summary: Reopen a closed project.
       description: |
         Clears `state` and `closed` from the section, leaving its tasks untouched.
-        No `If-Match` precondition.
+        Any live section the outline shows is accepted, the Inbox and the
+        "Projects" heading included — reopen is the way back if one was closed
+        anyway. No `If-Match` precondition.
       responses:
         "200":
           description: The reopened project resource.
@@ -2344,22 +2385,66 @@ paths:
       - name: name
         in: path
         required: true
-        description: Canonical named selection.
+        description: |
+          Named selection. `projects` is not one — `GET /projects` owns it — and
+          the outline has its own shape at `GET /views/outline`. Any other name
+          is `404` with the routed names in `details.views`.
         schema:
           type: string
-          enum: [agenda, next, quadrants, inbox, projects]
+          enum: [agenda, next, quadrants, inbox]
     get:
       tags: [views]
       operationId: getView
-      summary: A canonical named selection with grouping metadata.
+      summary: A TUI tab as data — its rows in canonical order and its groups.
       description: |
-        Returns the same task selection and ordering as the CLI/TUI named views
-        so their semantics are not reimplemented in the browser. `quadrants`
-        adds a `quadrant` label per item; `projects` groups by nearest open
-        project.
+        Returns the selection, order and grouping the TUI tab of the same name
+        paints, computed by the same shared code, so a client does not
+        reimplement view semantics. Dates are measured against the server's
+        `today` in the server's zone.
+
+        `tasks` is every row the view admits, each once, as full Task
+        resources in the view's canonical order — the order `tasks <view>
+        --json` prints, except that `inbox` also leads with the approvals block
+        the CLI's `tasks inbox` does not list. `groups` is the layout: ordered buckets that reference
+        those rows by id, so a row can sit in several groups (a task with two
+        contexts in `next`) without being repeated.
+
+        - `agenda`: open tasks with a deadline or available-from date, soonest
+          boundary first, priority breaking ties. Always four groups:
+          `overdue`, `today`, `tomorrow`, `later`, by the row's deadline (else
+          its available-from date, which is never overdue — a past start date
+          files under `today`).
+        - `next`: NEXT actions by priority. One group per `@context`, in key
+          order, with context-less rows under `(no context)`.
+        - `quadrants`: open tasks in file order. Always four groups `Q1`..`Q4`
+          with their headings as `label`, empty ones included; the
+          classification uses the server's `urgent_days`.
+        - `inbox`: the intake tab's two blocks. First `approvals` — every
+          PROPOSED task in the shared triage order (priority, then soonest
+          date) — then `inbox`, the accepted INBOX captures in file order.
+          `tasks` lists the approvals first. Each block groups by enclosing
+          project section in the Projects view's order, with the unfiled bucket
+          (`Inbox`) last; a group's `block` names which block it belongs to.
+
+        Every view except the approvals block admits only rows available now;
+        `include_unavailable=true` is the TUI's `Z` toggle and admits held,
+        deferred and not-yet-startable rows too. The TUI's tree mode (a
+        matching task's non-matching children riding under it) and its empty
+        states are presentation; `parent_id` on each Task is enough to nest
+        rows the same way.
+      parameters:
+        - name: include_unavailable
+          in: query
+          required: false
+          description: Admit rows that are not available now (the TUI's Z toggle). Default false.
+          schema: { type: boolean, default: false }
       responses:
         "200":
-          description: The named selection.
+          description: The named selection and its groups.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -2368,24 +2453,29 @@ paths:
                 properties:
                   data:
                     type: object
-                    required: [name, tasks]
+                    required: [name, today, include_unavailable, tasks, groups]
+                    additionalProperties: false
                     properties:
-                      name: { type: string }
+                      name:
+                        type: string
+                        enum: [agenda, next, quadrants, inbox]
+                      today:
+                        $ref: "#/components/schemas/IsoDateOnly"
+                      include_unavailable: { type: boolean }
                       tasks:
                         type: array
                         items: { $ref: "#/components/schemas/Task" }
                       groups:
-                        description: Optional grouping metadata (view-specific).
                         type: array
-                        items:
-                          type: object
-                          additionalProperties: true
+                        items: { $ref: "#/components/schemas/ViewGroup" }
                   meta: { $ref: "#/components/schemas/ResponseMeta" }
               examples:
                 agenda:
                   value:
                     data:
                       name: "agenda"
+                      today: "2026-07-20"
+                      include_unavailable: false
                       tasks:
                         - id: "3c4d5e6f"
                           revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
@@ -2423,10 +2513,155 @@ paths:
                           delegation: null
                           formal_links: []
                           links: []
+                      groups:
+                        - { block: null, key: "overdue", label: "Overdue", task_ids: ["3c4d5e6f"] }
+                        - { block: null, key: "today", label: "Today", task_ids: [] }
+                        - { block: null, key: "tomorrow", label: "Tomorrow", task_ids: [] }
+                        - { block: null, key: "later", label: "Later", task_ids: [] }
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/ViewNotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /views/outline:
+    get:
+      tags: [views]
+      operationId: getOutline
+      summary: The Outline tab as data — the live tree, sections and tasks interleaved in file order.
+      description: |
+        One flat DFS pre-order list of nodes, sections and tasks interleaved
+        exactly as the file holds them — the relative order of a section's
+        child tasks and child sub-sections that `/tasks` and `/sections`
+        cannot express between them. Section nodes carry the Section resource
+        plus task tallies; task nodes carry the full Task resource.
+
+        The rules are the Outline tab's, from the same shared code: PROPOSED
+        tasks never appear (the inbox view's approvals block owns undecided
+        work), and closed tasks and closed sections appear only with
+        `include_closed=true` (the TUI's `C` toggle). A hidden row is
+        transparent — its open children carry on one level up — so an open
+        task under a completed parent stays visible. Availability is not a
+        filter here: the outline is the whole tree.
+
+        Fold state and the urgency sub-bands the TUI draws inside a section
+        whose children are all tasks are presentation and are not applied; the
+        order is always the file's.
+      parameters:
+        - name: include_closed
+          in: query
+          required: false
+          description: Show DONE and CANCELLED tasks and closed sections. Default false.
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The outline.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [name, today, include_closed, nodes]
+                    additionalProperties: false
+                    properties:
+                      name: { type: string, enum: [outline] }
+                      today:
+                        $ref: "#/components/schemas/IsoDateOnly"
+                      include_closed: { type: boolean }
+                      nodes:
+                        type: array
+                        items: { $ref: "#/components/schemas/OutlineNode" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  summary: A project with a task and a nested sub-section (task resource abbreviated).
+                  value:
+                    data:
+                      name: "outline"
+                      today: "2026-07-20"
+                      include_closed: false
+                      nodes:
+                        - kind: "section"
+                          id: "cccc0003"
+                          parent_id: null
+                          depth: 0
+                          section:
+                            id: "cccc0003"
+                            title: "Projects"
+                            parent_id: null
+                            kind: "projects_root"
+                            body: null
+                            state: null
+                            closed: null
+                            task_count: 2
+                            open_task_count: 2
+                            closed_task_count: 1
+                            hidden_closed_count: 1
+                          task: null
+                        - kind: "section"
+                          id: "cccc0004"
+                          parent_id: "cccc0003"
+                          depth: 1
+                          section:
+                            id: "cccc0004"
+                            title: "Site launch"
+                            parent_id: "cccc0003"
+                            kind: "project"
+                            body: "Goal: ship the personal site."
+                            state: null
+                            closed: null
+                            task_count: 2
+                            open_task_count: 2
+                            closed_task_count: 1
+                            hidden_closed_count: 1
+                          task: null
+                        - kind: "task"
+                          id: "cccc0005"
+                          parent_id: "cccc0004"
+                          depth: 2
+                          section: null
+                          task: { id: "cccc0005", title: "Pick a static-site generator", state: "NEXT" }
+                        - kind: "section"
+                          id: "cccc0007"
+                          parent_id: "cccc0004"
+                          depth: 2
+                          section:
+                            id: "cccc0007"
+                            title: "Copywriting"
+                            parent_id: "cccc0004"
+                            kind: "subsection"
+                            body: null
+                            state: null
+                            closed: null
+                            task_count: 1
+                            open_task_count: 1
+                            closed_task_count: 0
+                            hidden_closed_count: 0
+                          task: null
+                        - kind: "task"
+                          id: "cccc0008"
+                          parent_id: "cccc0007"
+                          depth: 3
+                          section: null
+                          task: { id: "cccc0008", title: "Draft the about page", state: "TODO" }
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2947,7 +3182,10 @@ components:
                   details: {}
                   request_id: "req_2d3e"
     NotFound:
-      description: No such task in the requested source.
+      description: |
+        No such task in the requested source. A method and path no route serves
+        is also `404 not_found`, with the message "No endpoint matches that
+        method and path." rather than the task sentence.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2959,6 +3197,40 @@ components:
                   message: "No task with that id."
                   details: {}
                   request_id: "req_3c4d"
+    ViewNotFound:
+      description: No view with that name.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            unknown_view:
+              value:
+                error:
+                  code: "not_found"
+                  message: "No view with that name."
+                  details:
+                    name: "projects"
+                    views: [agenda, next, quadrants, inbox, outline]
+                  request_id: "req_3c4e"
+    SectionActionRefused:
+      description: |
+        The section holds the file together rather than holding work: the Inbox
+        (where unfiled captures land) and the "Projects" heading (what makes its
+        children projects) cannot be renamed, completed, dropped or archived.
+        Reopen is always allowed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            inbox:
+              value:
+                error:
+                  code: "conflict"
+                  message: "The Inbox is where unfiled captures land; it cannot be renamed, closed, or archived."
+                  details:
+                    id: "cccc0001"
+                    kind: "inbox"
+                  request_id: "req_3c4f"
     StaleRevision:
       description: |
         The supplied `If-Match` no longer matches the task's current revision.
@@ -3383,14 +3655,17 @@ components:
             its backing endpoints are routed by this server, not merely when the
             store supports the operation: `undo`/`redo` are `/history` and
             `/history/{undo,redo}`, `archive_sweep` is `/archive-preview` and
-            `/archive-sweeps`, and `events` is the `/events` stream. Unknown
-            flags must be ignored.
+            `/archive-sweeps`, `events` is the `/events` stream, and `views` is
+            `GET /views/{name}` and `GET /views/outline`, so a client can tell a
+            missing route from an empty view. Unknown flags must be ignored.
           additionalProperties: { type: boolean }
 
     Section:
       type: object
-      description: A live section (project heading).
-      required: [id, title, parent_id]
+      description: |
+        A live section. Every member is always present; `body`, `state` and
+        `closed` are null when absent.
+      required: [id, title, parent_id, kind, body, state, closed]
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/TaskId" }
@@ -3399,6 +3674,140 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/TaskId" }
             - { type: "null" }
+        kind: { $ref: "#/components/schemas/SectionKind" }
+        body:
+          type: [string, "null"]
+          description: The section's body note, or null.
+        state:
+          description: Section lifecycle state, null when open.
+          oneOf:
+            - { type: string, enum: [DONE, CANCELLED] }
+            - { type: "null" }
+        closed:
+          description: Date the section was closed, null when open.
+          oneOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+            - { type: "null" }
+
+    SectionKind:
+      type: string
+      enum: [inbox, projects_root, project, area, list, subsection]
+      description: |
+        The section's structural role. `inbox` is the top-level Inbox;
+        `projects_root` the top-level "Projects" heading; `project` a direct
+        child of it; `list` a top-level saved GTD list (Next Actions, Waiting
+        For, Someday / Maybe); `area` any other top-level section, whether or
+        not it holds open work today (the `/projects` listing is narrower); and
+        `subsection` anything nested deeper. Sections carry no stored role, so
+        the reserved ones are recognised by title.
+
+    OutlineSection:
+      type: object
+      description: |
+        The Section members plus the outline's task tallies, all at any depth.
+        Spelled out rather than composed with `allOf`, because Section is closed
+        (`additionalProperties: false`) and would reject the tallies.
+      required: [id, title, parent_id, kind, body, state, closed,
+                 task_count, open_task_count, closed_task_count, hidden_closed_count]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/TaskId" }
+        title: { type: string }
+        parent_id:
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        kind: { $ref: "#/components/schemas/SectionKind" }
+        body:
+          type: [string, "null"]
+        state:
+          oneOf:
+            - { type: string, enum: [DONE, CANCELLED] }
+            - { type: "null" }
+        closed:
+          oneOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+            - { type: "null" }
+        task_count:
+          type: integer
+          minimum: 0
+          description: Tasks beneath that this outline response shows — the TUI's section badge.
+        open_task_count:
+          type: integer
+          minimum: 0
+          description: Open (INBOX, TODO, NEXT, WAITING) tasks beneath, deferred included.
+        closed_task_count:
+          type: integer
+          minimum: 0
+          description: DONE and CANCELLED tasks beneath, shown or not.
+        hidden_closed_count:
+          type: integer
+          minimum: 0
+          description: |
+            Closed tasks and closed sections beneath that `include_closed=false`
+            is holding back — the TUI's `· N closed` marker. Zero when
+            `include_closed=true`.
+
+    OutlineNode:
+      type: object
+      description: |
+        One row of the outline. `parent_id` and `depth` describe the outline AS
+        SHOWN: a hidden row (a proposal, or a closed task or section while
+        `include_closed=false`) is transparent, so its children carry on one
+        level up and name the nearest shown ancestor. Exactly one of `section`
+        and `task` is non-null, as `kind` says.
+      required: [kind, id, parent_id, depth, section, task]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [section, task]
+        id: { $ref: "#/components/schemas/TaskId" }
+        parent_id:
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        depth:
+          type: integer
+          minimum: 0
+        section:
+          oneOf:
+            - { $ref: "#/components/schemas/OutlineSection" }
+            - { type: "null" }
+        task:
+          oneOf:
+            - { $ref: "#/components/schemas/Task" }
+            - { type: "null" }
+
+    ViewGroup:
+      type: object
+      description: |
+        One bucket of a named view, in the order a grouped surface lays them
+        out. `task_ids` reference rows of the response's `tasks`, in the order
+        the group lists them.
+      required: [block, key, label, task_ids]
+      additionalProperties: false
+      properties:
+        block:
+          description: |
+            The intake block for `inbox` (`approvals` above `inbox`), null for
+            every other view.
+          oneOf:
+            - { type: string, enum: [approvals, inbox] }
+            - { type: "null" }
+        key:
+          type: string
+          description: |
+            agenda: `overdue`, `today`, `tomorrow`, `later`. next: the
+            `@context`, or `(no context)`. quadrants: `Q1`..`Q4` (the same
+            spelling `tasks quadrants --json` uses). inbox: the enclosing
+            project section's title, or `Inbox` for the unfiled bucket.
+        label:
+          type: string
+          description: Display text — the quadrant heading, the day name, or the key.
+        task_ids:
+          type: array
+          items: { $ref: "#/components/schemas/TaskId" }
 
     Project:
       type: object
@@ -3435,7 +3844,14 @@ components:
             - { type: "null" }
         kind:
           type: string
-          enum: [project, area]
+          enum: [project, area, list]
+          description: |
+            The Projects listing's vocabulary: `project`, `area`, or `list` for
+            a saved GTD list. A section action's response on a section the
+            listing does not admit keeps that vocabulary rather than the finer
+            SectionKind: a nested sub-section and the Inbox read `list`, a
+            top-level area with no open work and the "Projects" heading read
+            `area`. `GET /views/outline` and `/sections` carry the exact role.
         open_count:
           type: integer
           minimum: 0

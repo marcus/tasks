@@ -338,16 +338,19 @@ func TestRenameAreaOutOfScopeKeepsTheTimedRollups(t *testing.T) {
 	}
 }
 
-func TestRenameOnInboxOrProjectsRootIs404AndWritesNothing(t *testing.T) {
+func TestRenameOnInboxOrProjectsRootIsRefusedAndWritesNothing(t *testing.T) {
 	h := newProjectHarness(t)
 	before := string(h.storeBytes())
-	// Four ids that are sections but not projects or areas, plus a task id. Each
-	// must refuse BEFORE the store's mechanical section retitle runs.
-	for _, id := range []string{pfxInbox, pfxProjects, pfxDonepile, pfxSiteSub, pfxRenoTodo} {
-		assertError(t, h.json("PATCH", "/api/v1/projects/"+id, `{"title":"Renamed"}`, nil), 404, "not_found")
-		if string(h.storeBytes()) != before {
-			t.Fatalf("a non-project rename (%s) wrote to the store", id)
-		}
+	// The Inbox and the Projects heading resolve — the Outline shows both — but
+	// they hold the file together, so a rename is a conflict with what they are
+	// for. A task id is not a section at all. Each must refuse BEFORE the
+	// store's mechanical section retitle runs.
+	for _, id := range []string{pfxInbox, pfxProjects} {
+		assertError(t, h.json("PATCH", "/api/v1/projects/"+id, `{"title":"Renamed"}`, nil), 409, "conflict")
+	}
+	assertError(t, h.json("PATCH", "/api/v1/projects/"+pfxRenoTodo, `{"title":"Renamed"}`, nil), 404, "not_found")
+	if string(h.storeBytes()) != before {
+		t.Fatal("a refused rename wrote to the store")
 	}
 }
 
@@ -471,8 +474,8 @@ func TestCompleteMissingProjectIs404(t *testing.T) {
 	assertError(t, h.json("POST", "/api/v1/projects/ffffffff/complete", "", nil), 404, "not_found")
 }
 
-// An area drops out of the read model once its open work is closed; the completed
-// 200 is synthesized from the pre-read, never a post-write 404.
+// An area drops out of the Projects listing once its open work is closed; the
+// completed 200 is the section re-read, never a post-write 404.
 func TestCompleteAreaClosesItsTasksAndReturnsZeroOpen(t *testing.T) {
 	h := newProjectHarness(t)
 	answered := h.json("POST", "/api/v1/projects/"+pfxTasks+"/complete", "", nil)
@@ -481,8 +484,11 @@ func TestCompleteAreaClosesItsTasksAndReturnsZeroOpen(t *testing.T) {
 	if data["open_count"] != float64(0) || data["held_count"] != float64(0) {
 		t.Errorf("rollups = %v", data)
 	}
-	if data["stuck"] != true {
-		t.Errorf("stuck = %v, want true", data["stuck"])
+	// The post-write read resolves the closed area through the Outline's
+	// section view, so the answer is the read model's: a closed section is never
+	// stuck, and it carries its lifecycle stamp.
+	if data["stuck"] != false || data["state"] != "DONE" {
+		t.Errorf("stuck = %v, state = %v, want false and DONE", data["stuck"], data["state"])
 	}
 	if ids := stringsOf(data["task_ids"]); len(ids) != 0 {
 		t.Errorf("task_ids = %v, want empty", ids)
@@ -492,20 +498,25 @@ func TestCompleteAreaClosesItsTasksAndReturnsZeroOpen(t *testing.T) {
 			t.Errorf("%q was not closed: %v", title, record)
 		}
 	}
-	// The synthesis was necessary: the area is gone from the read model.
+	// The listing's own read still does not admit it.
 	assertError(t, h.get("/api/v1/projects/"+pfxTasks), 404, "not_found")
 }
 
-func TestCompleteOnInboxOrProjectsRootIs404AndWritesNothing(t *testing.T) {
+func TestCompleteOnInboxOrProjectsRootIsRefusedAndWritesNothing(t *testing.T) {
 	h := newProjectHarness(t)
 	before := string(h.storeBytes())
-	// Neither is a project or area; each must 404 BEFORE any cascade runs — the
-	// store's CompleteProject would happily close Inbox's tasks.
-	for _, id := range []string{pfxInbox, pfxProjects, pfxDonepile, pfxRenoTodo} {
-		assertError(t, h.json("POST", "/api/v1/projects/"+id+"/complete", "", nil), 404, "not_found")
-		if string(h.storeBytes()) != before {
-			t.Fatalf("a non-project complete (%s) closed tasks", id)
+	// Each must refuse BEFORE any cascade runs — the store's CompleteProject
+	// would happily close Inbox's tasks.
+	for _, id := range []string{pfxInbox, pfxProjects} {
+		refused := h.json("POST", "/api/v1/projects/"+id+"/complete", "", nil)
+		assertError(t, refused, 409, "conflict")
+		if kind, _ := refused.dig("error", "details", "kind").(string); kind == "" {
+			t.Errorf("refusal for %s names no kind: %s", id, refused.Body)
 		}
+	}
+	assertError(t, h.json("POST", "/api/v1/projects/"+pfxRenoTodo+"/complete", "", nil), 404, "not_found")
+	if string(h.storeBytes()) != before {
+		t.Fatal("a refused complete closed tasks")
 	}
 	if record := h.recordFor("unfiled capture"); record["state"] != "INBOX" {
 		t.Errorf("the Inbox task was closed: %v", record)
@@ -660,17 +671,82 @@ func TestArchiveRejectsUnknownQuery(t *testing.T) {
 	}
 }
 
-func TestArchiveOnANonProjectIs404AndWritesNothing(t *testing.T) {
+func TestArchiveOnInboxProjectsRootOrATaskWritesNothing(t *testing.T) {
 	h := newProjectHarness(t)
 	before := string(h.storeBytes())
-	for _, id := range []string{pfxInbox, pfxProjects, pfxDonepile, pfxRenoTodo, "ffffffff"} {
-		assertError(t, h.postProject("/api/v1/projects/"+id+"/archive?force=true"), 404, "not_found")
+	for id, status := range map[string]int{
+		pfxInbox: 409, pfxProjects: 409, pfxRenoTodo: 404, "ffffffff": 404,
+	} {
+		answered := h.postProject("/api/v1/projects/" + id + "/archive?force=true")
+		assertStatus(t, answered, status)
 		if string(h.storeBytes()) != before {
-			t.Fatalf("a non-project archive (%s) wrote to the store", id)
+			t.Fatalf("a refused archive (%s) wrote to the store", id)
 		}
 		if h.archiveBytes() != "" {
-			t.Fatalf("a non-project archive (%s) created an archive file", id)
+			t.Fatalf("a refused archive (%s) created an archive file", id)
 		}
+	}
+}
+
+// The TUI acts on every section its Outline shows. A nested sub-section and an
+// area with no open work used to be 404 here while the terminal could rename,
+// close and archive them; they now resolve the same way.
+func TestSectionActionsReachEverySectionTheOutlineShows(t *testing.T) {
+	h := newProjectHarness(t)
+
+	renamed := h.json("PATCH", "/api/v1/projects/"+pfxSiteSub, `{"title":"Copy"}`, nil)
+	assertStatus(t, renamed, 200)
+	if renamed.data()["title"] != "Copy" || renamed.data()["id"] != pfxSiteSub {
+		t.Fatalf("rename response = %v", renamed.data())
+	}
+	if h.recordFor("Copy") == nil {
+		t.Fatal("the sub-section was not retitled")
+	}
+
+	completed := h.json("POST", "/api/v1/projects/"+pfxSiteSub+"/complete", "", nil)
+	assertStatus(t, completed, 200)
+	if completed.data()["state"] != "DONE" || completed.data()["open_count"] != float64(0) {
+		t.Fatalf("complete response = %v", completed.data())
+	}
+	if task := h.recordFor("Draft the about page"); task["state"] != "DONE" {
+		t.Fatalf("the sub-section's task = %v", task)
+	}
+	// Its sibling task in the parent project is untouched.
+	if task := h.recordFor("Write the landing copy"); task["state"] != "TODO" {
+		t.Fatalf("a task outside the sub-section = %v", task)
+	}
+
+	reopened := h.json("POST", "/api/v1/projects/"+pfxSiteSub+"/reopen", "", nil)
+	assertStatus(t, reopened, 200)
+	if reopened.data()["state"] != nil {
+		t.Fatalf("reopen response = %v", reopened.data())
+	}
+
+	// "Done pile" is an area with no open work, so the Projects listing does
+	// not list it — but it is a section the Outline shows, and dropping it and
+	// archiving it are both one keystroke away in the terminal.
+	dropped := h.json("POST", "/api/v1/projects/"+pfxDonepile+"/drop", "", nil)
+	assertStatus(t, dropped, 200)
+	if dropped.data()["state"] != "CANCELLED" {
+		t.Fatalf("drop response = %v", dropped.data())
+	}
+	archived := h.postProject("/api/v1/projects/" + pfxDonepile + "/archive")
+	assertStatus(t, archived, 200)
+	assertStrings(t, stringsOf(archived.data()["moved_ids"]), []string{pfxDonepile, pfxDoneTask}, "moved_ids")
+
+	// Reopen is the one action the structural sections take: it is the way back
+	// if one was closed anyway, and it moves no task.
+	assertStatus(t, h.json("POST", "/api/v1/projects/"+pfxInbox+"/reopen", "", nil), 200)
+}
+
+// Capture into a section is POST /tasks with the section as parent_id; it
+// reaches a nested sub-section exactly as it reaches a project.
+func TestCaptureIntoANestedSection(t *testing.T) {
+	h := newProjectHarness(t)
+	created := h.json("POST", "/api/v1/tasks", `{"title":"Draft the FAQ","parent_id":"`+pfxSiteSub+`"}`, nil)
+	assertStatus(t, created, 201)
+	if created.data()["section_id"] != pfxSiteSub {
+		t.Fatalf("created = %v", created.data())
 	}
 }
 

@@ -14,16 +14,17 @@ import (
 // cursor field, the priority field, the shared meta column — is the vocabulary
 // in sections.go, which every view speaks.
 const (
-	bucketOverdue  = "overdue"
-	bucketToday    = "today"
-	bucketTomorrow = "tomorrow"
-	bucketLater    = "later"
+	bucketOverdue  = taskquery.AgendaOverdue
+	bucketToday    = taskquery.AgendaToday
+	bucketTomorrow = taskquery.AgendaTomorrow
+	bucketLater    = taskquery.AgendaLater
 )
 
 // agendaSections is the painted order, with the slot each heading takes. The
 // slots are the existing urgency ladder rather than four new ones: a group
 // heading and the dates under it mean the same thing, and they must not be able
-// to disagree about what "soon" looks like in a theme.
+// to disagree about what "soon" looks like in a theme. The keys and their order
+// are taskquery.AgendaBuckets — the same buckets the HTTP agenda view returns.
 var agendaSections = []struct {
 	Key   string
 	Label string
@@ -35,33 +36,13 @@ var agendaSections = []struct {
 	{bucketLater, "LATER", "muted"},
 }
 
-// dayBucket classifies a day delta. `scheduled` marks a date that is a start
-// date rather than a deadline: a start date that has already passed is not
-// overdue, it is startable, so it lands in TODAY.
-func dayBucket(days int, scheduled bool) string {
-	if scheduled && days < 0 {
-		days = 0
-	}
-	switch {
-	case days < 0:
-		return bucketOverdue
-	case days == 0:
-		return bucketToday
-	case days == 1:
-		return bucketTomorrow
-	default:
-		return bucketLater
-	}
-}
+// dayBucket classifies a day delta; see taskquery.DayBucket.
+func dayBucket(days int, scheduled bool) string { return taskquery.DayBucket(days, scheduled) }
 
 // itemBucket is the day group one item belongs to. An undated rider inherits
 // nothing — it rides its anchor, and only anchors are bucketed.
 func itemBucket(request BuildRequest, item store.Item) string {
-	date, kind, _, ok := primaryDate(request.Queries, item)
-	if !ok {
-		return bucketLater
-	}
-	return dayBucket(date.Sub(request.Queries.Today()), kind != "deadline")
+	return request.Queries.AgendaBucket(item)
 }
 
 // dateCell is the shared meta value: what a row's date says, and the slot it
@@ -138,10 +119,10 @@ func agendaGrouped(request BuildRequest, byBucket map[string][]Row) []Row {
 // date must not hide an earlier qualifying descendant, exactly as the anchor
 // SORT already refuses to.
 func anchorDateItem(request BuildRequest, query ViewQuery, node *taskquery.Node) store.Item {
-	best, key := *node.Item, query.temporalSortKey(*node.Item)
+	best, key := *node.Item, query.TemporalSortKey(*node.Item)
 	for _, child := range visibleChildren(request, node) {
 		candidate := anchorDateItem(request, query, child)
-		if candidateKey := query.temporalSortKey(candidate); candidateKey < key {
+		if candidateKey := query.TemporalSortKey(candidate); candidateKey < key {
 			best, key = candidate, candidateKey
 		}
 	}

@@ -341,11 +341,18 @@ the human-readable tour of that contract.
 ## HTTP, still local
 
 - `GET /api/v1/meta`, `/sections`, `/tasks`, `/tasks/{id}`,
-  `/projects`, `/views/{name}`, `/recurrence/explain`.
+  `/projects`, `/projects/{id}`, `/recurrence/explain`.
+- `GET /api/v1/views/{agenda,next,quadrants,inbox}`: the TUI tabs
+  as full task resources plus their groups, with
+  `include_unavailable` for the `Z` toggle.
+  `GET /api/v1/views/outline`: the whole tree, sections and tasks
+  interleaved in file order, with `include_closed`.
 - Writes: create, patch, delete, activate, approve, reject,
   delegate, undelegate, claim, release, work_ref, delegation_note,
-  project complete/archive. The delegation writes honour the same
-  mandatory `If-Match` as every other task write.
+  project create/rename/complete/drop/reopen/archive — the project
+  actions on any section the Outline shows, bar the Inbox and
+  Projects heading. The delegation writes honour the same mandatory
+  `If-Match` as every other task write.
 - `PATCH` takes tag and note deltas (`add_tags`, `remove_contexts`,
   `append_body`, …); a delta-only patch may send `If-Match: *` and
   land beside a concurrent edit instead of a 412.

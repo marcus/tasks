@@ -134,8 +134,8 @@ model {
     }
 
     routes = component 'Routes & Representation' {
-      description 'Explicit dispatch: health, meta (If-None-Match 304 from the revision digest), sections, tasks, activate, decisions, delegation, notes, projects, recurrence explain, history peek and revision-pinned undo/redo, fingerprint-pinned archive preview and sweep, and a capped /events SSE stream. Write responses carry meta.effects (recurrence roll, completion cascade). Documented /views is unserved.'
-      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/activate.go', 'internal/api/effects.go', 'internal/api/history.go', 'internal/api/events.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
+      description 'Explicit dispatch: health, meta (If-None-Match 304 from the revision digest), sections, tasks, activate, decisions, delegation, notes, projects and section actions, views (agenda, next, quadrants, inbox, outline), recurrence explain, history peek and revision-pinned undo/redo, fingerprint-pinned archive preview and sweep, and a capped /events SSE stream. Write responses carry meta.effects (recurrence roll, completion cascade).'
+      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/activate.go', 'internal/api/effects.go', 'internal/api/history.go', 'internal/api/events.go', 'internal/api/views.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
     }
 
     precondition = component 'ETag / If-Match Precondition' {
@@ -193,8 +193,8 @@ model {
       }
 
       derivations = component 'Named Views & Derivations' {
-        description 'agenda, next, quadrants, inbox; the tree; ancestor-aware availability with lead gates; Covey quadrants; project views; link classes.'
-        metadata { uid 'query.views' fractalColor '#6FA39C' evidence ['internal/taskquery/queries.go', 'internal/taskquery/view.go', 'internal/taskquery/tree.go', 'internal/taskquery/quadrants.go', 'internal/taskquery/projects.go'] }
+        description 'agenda, next, quadrants, inbox with their groups (ViewQuery, shared by the TUI tabs and the HTTP views read); the outline; the tree; ancestor-aware availability with lead gates; Covey quadrants; project and section views; link classes.'
+        metadata { uid 'query.views' fractalColor '#6FA39C' evidence ['internal/taskquery/queries.go', 'internal/taskquery/view.go', 'internal/taskquery/viewquery.go', 'internal/taskquery/namedview.go', 'internal/taskquery/outline.go', 'internal/taskquery/tree.go', 'internal/taskquery/quadrants.go', 'internal/taskquery/projects.go'] }
       }
     }
 
@@ -433,6 +433,7 @@ model {
   tui.embed .reads tui.shortcuts 'Exports bindings, commands, and contexts' { metadata { uid 'embed-shortcuts' } }
   tui.runtime .calls core.application.readmodel 'Reads and writes only through the facade' { metadata { uid 'tuiruntime-readmodel' } }
   tui.rows .calls core.application.commands 'Reads and writes only through the facade' { metadata { uid 'tuiviews-commands' } }
+  tui.rows .calls core.query.derivations 'Per-view eligibility, grouping, order, and outline rules' { metadata { uid 'tuiviews-viewquery' } }
   tui.runtime .calls persistence.check 'Store helpers outside the facade: format banner, atomic session save' { metadata { uid 'tuiruntime-check' } }
   tui.session .calls persistence.atomic 'Store helpers outside the facade: format banner, atomic session save' { metadata { uid 'session-atomic' } }
   tui.runtime .renders tui.rows 'Rebuilds rows from one read' { metadata { uid 'tuiruntime-views' } }
@@ -455,6 +456,7 @@ model {
   api.routes .calls core.temporal.timezones 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-timezones' } }
   api.routes .calls core.links 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-links' } }
   api.routes .calls api.seams 'Checked reads and multi-field PATCH' { metadata { uid 'routes-seams' } }
+  api.routes .calls core.query.derivations 'Named views, the outline, and section roles' { metadata { uid 'routes-views' } }
   api.routes .renders jsonout 'Renders envelopes and resources' { metadata { uid 'routes-jsonout' } }
   api.seams .calls persistence.snapshot 'Two named seams: checked read, guarded changeset' { metadata { uid 'seams-snapshot' } }
   api.seams .calls persistence.core 'Two named seams: checked read, guarded changeset' { metadata { uid 'seams-core' } }

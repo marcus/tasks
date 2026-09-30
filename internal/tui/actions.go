@@ -903,7 +903,7 @@ func (m *Model) RenameProject() {
 				return "title cannot be blank"
 			}
 			if !(result.OK() || result.NoChange()) {
-				return "project no longer exists"
+				return projectFailure(result)
 			}
 			m.formSuccess(func() {
 				m.Flash("renamed: " + strings.TrimSpace(raw))
@@ -1082,7 +1082,7 @@ func (m *Model) projectCompleteConfirmKey(key string) {
 		result := m.app.CompleteProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		closed := 0
@@ -1130,7 +1130,7 @@ func (m *Model) projectDropConfirmKey(key string) {
 		result := m.app.DropProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		closed := 0
@@ -1174,7 +1174,7 @@ func (m *Model) projectReopenConfirmKey(key string) {
 		result := m.app.ReopenProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		m.Flash("↺ reopened " + project.Title)
@@ -1197,7 +1197,7 @@ func (m *Model) projectArchiveConfirmKey(key string) {
 		result := m.app.ArchiveProject(project.ID, m.operation())
 		if !(result.OK() || result.NoChange()) {
 			m.Refresh()
-			m.Flash("project no longer exists")
+			m.Flash(projectFailure(result))
 			return
 		}
 		moved := len(result.TouchedIDs)
@@ -1480,6 +1480,16 @@ func (m *Model) temporalContext() temporal.Context {
 
 // outcomeMessage is the user-visible sentence for a refused mutation: the
 // store's own words when it gave any, and the caller's fallback otherwise.
+// projectFailure is what a refused section action says: the shared refusal's
+// own sentence when the core turned it away (the Inbox and the Projects heading
+// cannot be renamed, closed or archived), and otherwise the section is gone.
+func projectFailure(result application.Outcome) string {
+	if result.Conflict() {
+		return outcomeMessage(result, "project no longer exists")
+	}
+	return "project no longer exists"
+}
+
 func outcomeMessage(outcome application.Outcome, fallback string) string {
 	if len(outcome.Errors) > 0 {
 		return outcome.Errors[0]
