@@ -253,7 +253,7 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 	if _, err := queryParams(request); err != nil {
 		return response{}, err
 	}
-	expected, err := ifMatch(request)
+	expected, wildcard, err := patchPrecondition(request)
 	if err != nil {
 		return response{}, err
 	}
@@ -261,11 +261,16 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 	if err != nil {
 		return response{}, err
 	}
-	if err := rejectUnknownFields(body, patchFields); err != nil {
+	if err := rejectUnknownFields(body, append(append([]string{}, patchFields...), deltaFields...)); err != nil {
 		return response{}, err
 	}
 	if body.empty() {
 		return response{}, validationError(reason("changes", "must contain at least one field"))
+	}
+	// `If-Match: *` reaches the store as NO precondition, which is sound only
+	// because every member is a delta the store composes under its own lock.
+	if wildcard && !deltaOnly(body) {
+		return response{}, wildcardRefusal()
 	}
 
 	read, readErr := s.options.Read()
@@ -278,6 +283,9 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 			withDetails(pairDetails(detailPair{Key: "field", Value: "id"}, detailPair{Key: "id", Value: id}))
 	}
 	if err := validatePatchBody(body, read.Queries, current); err != nil {
+		return response{}, err
+	}
+	if err := validatePatchDeltas(body); err != nil {
 		return response{}, err
 	}
 
@@ -305,17 +313,7 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 	}); err != nil {
 		return response{}, err
 	}
-	item, resources, revision, err := s.resourceAfter(outcome, id)
-	if err != nil {
-		return response{}, err
-	}
-	w := jsonout.New()
-	writeSuccess(w, func(w *jsonout.Writer) { resources.writeTask(w, item) }, revision)
-	return response{
-		status:  200,
-		headers: map[string]string{"etag": etag(resources.revisionFor(item))},
-		body:    w.Bytes(),
-	}, nil
+	return s.taskWriteResponse(outcome, id)
 }
 
 func placementOf(changes []store.Change) bool {
@@ -333,9 +331,14 @@ func placementOf(changes []store.Change) bool {
 // has no operation behind it. Answering 501 with the missing capability named is
 // the only response that cannot mislead a client into believing a write landed.
 
-// deleteTask is the undoable hard delete. It answers 204 with no body, so the
-// only thing a client learns from a success is that the subtree is gone — which
-// is why the refusals below it carry the counts instead.
+// deleteTask is the undoable hard delete.
+//
+// A plain delete removes one leaf and answers 204: the request named the one
+// task that is gone, so there is nothing further to say. `cascade=true` answers
+// 200 with `{deleted: [...]}` — every task the subtree removed, root first, as
+// it stood just before the write — because a client showing that subtree
+// cannot otherwise learn which rows went, and that is the shape
+// `tasks delete --json` reports. The refusals carry the counts instead.
 //
 // The If-Match is MANDATORY here and reaches the store as the precondition it
 // guards the whole subtree with, so unlike the delegation routes there is no
@@ -357,8 +360,14 @@ func (s *Server) deleteTask(request *http.Request, id, requestID string) (respon
 	if err != nil {
 		return response{}, err
 	}
-	if err := s.ensureStoreReady(); err != nil {
-		return response{}, err
+	// The readiness read doubles as the cascade's description of what it is
+	// about to remove: once the write lands there is nothing left to render.
+	// The If-Match guards every revision component, the subtree's membership
+	// included, so when this read carries the revision the client sent, a
+	// delete that succeeds removed exactly the tasks it holds.
+	before, readErr := s.options.Read()
+	if readErr != nil || !before.OK() {
+		return response{}, readFailure(before, readErr)
 	}
 	operation, err := s.operationContext(requestID)
 	if err != nil {
@@ -370,7 +379,36 @@ func (s *Server) deleteTask(request *http.Request, id, requestID string) (respon
 	if err := s.mutationFailure(outcome, mutationRefusal{ID: id}); err != nil {
 		return response{}, err
 	}
-	return response{status: 204}, nil
+	if !*cascade {
+		return response{status: 204}, nil
+	}
+	return deletedResponse(before, outcome), nil
+}
+
+// deletedResponse is the cascade's 200: the removed tasks, in the store's
+// removal order (the root, then its subtree in file order), each rendered from
+// the pre-delete read. The ids come from the store's own report of what it
+// removed rather than from that read, so the list can never name a task the
+// write did not take; in the one interleaving where the read predates a change
+// the client's If-Match already reflected, an id the read never saw is left out
+// rather than invented.
+func deletedResponse(before CheckedRead, outcome application.Outcome) response {
+	resources := newResourceContext(before.Queries)
+	removed := outcome.TouchedIDs
+	w := jsonout.New()
+	writeSuccess(w, func(w *jsonout.Writer) {
+		w.BeginObject()
+		w.Key("deleted")
+		w.BeginArray()
+		for _, id := range removed {
+			if item, found := findInSource(before.Queries, id, store.SourceLive); found {
+				resources.writeTask(w, item)
+			}
+		}
+		w.EndArray()
+		w.EndObject()
+	}, outcome.StoreRevision)
+	return response{status: 200, body: w.Bytes()}
 }
 
 // decideProposal accepts or declines one proposal.
@@ -439,17 +477,9 @@ func (s *Server) decideProposal(request *http.Request, id, action, requestID str
 	if err := s.mutationFailure(outcome, mutationRefusal{ID: id, SemanticInvalid: true}); err != nil {
 		return response{}, err
 	}
-	item, resources, revision, err := s.resourceAfter(outcome, id)
-	if err != nil {
-		return response{}, err
-	}
-	w := jsonout.New()
-	writeSuccess(w, func(w *jsonout.Writer) { resources.writeTask(w, item) }, revision)
-	return response{
-		status:  200,
-		headers: map[string]string{"etag": etag(resources.revisionFor(item))},
-		body:    w.Bytes(),
-	}, nil
+	// `complete=true` cascades DONE over accepted open descendants, which
+	// `meta.effects` reports like any other completion.
+	return s.taskWriteResponse(outcome, id)
 }
 
 // rejectNotes is App#optional_reject_notes!: an absent body keeps the historical

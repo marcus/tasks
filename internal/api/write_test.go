@@ -462,8 +462,25 @@ func TestDeleteRefusesDescendantsUntilCascade(t *testing.T) {
 		t.Error("a refused delete wrote to the store")
 	}
 
+	// A cascade answers 200 with every task it removed, root first — the shape
+	// `tasks delete --json` reports — so a client showing the subtree learns
+	// which rows went without refetching.
 	cascaded := h.json("DELETE", "/api/v1/tasks/"+fixPR+"?cascade=true", "", h.withIfMatch(tag))
-	assertStatus(t, cascaded, 204)
+	assertStatus(t, cascaded, 200)
+	deleted, _ := cascaded.dig("data", "deleted").([]any)
+	ids := []string{}
+	for _, row := range deleted {
+		task, _ := row.(map[string]any)
+		id, _ := task["id"].(string)
+		ids = append(ids, id)
+	}
+	assertStrings(t, ids, []string{fixPR, fixChild, fixGrand}, "deleted ids")
+	if first, _ := deleted[0].(map[string]any); first["title"] != "Review PR backlog" {
+		t.Errorf("deleted[0] is not the full task as it stood: %v", first)
+	}
+	if revision, _ := cascaded.dig("meta", "store_revision").(string); revision != h.get("/api/v1/meta").dig("meta", "store_revision") {
+		t.Errorf("meta.store_revision %q is not the post-delete revision", revision)
+	}
 	for _, id := range []string{fixPR, fixChild, fixGrand} {
 		if strings.Contains(string(h.storeBytes()), id) {
 			t.Errorf("%s survived the cascade", id)

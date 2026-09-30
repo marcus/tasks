@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 
+	"github.com/marcus/tasks/internal/application"
 	"github.com/marcus/tasks/internal/lead"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/taskquery"
@@ -166,9 +167,18 @@ func (s *surfaceContext) activate(args []string) int {
 		}
 		return s.printAvailabilityChange(snapshot, item.ID, ownText, true, override)
 	}
-	return s.changesetAndReport(args, item,
-		[]store.Change{{Field: store.FieldActivate, Value: store.BoolValue(true)}},
-		"activate: "+item.Title, "activate", "failed to activate", flags["--json"],
+	// The same application operation POST /tasks/{id}/activate runs, so the
+	// two surfaces cannot drift on what "available now" means.
+	app, _, status := s.projectApplication()
+	if status != 0 {
+		return status
+	}
+	return s.revisionWriteAndReport(args, item,
+		func(_ *store.Store, revision string) store.MutationResult {
+			return app.ActivateTask(application.ActivateCommand{
+				ID: item.ID, ExpectedRevision: revision, HistoryLabel: "activate: " + item.Title,
+			}, nil).MutationResult
+		}, "activate", "failed to activate", flags["--json"],
 		func(result store.MutationResult) int {
 			if flags["--json"] {
 				touched := result.TouchedIDs

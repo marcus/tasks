@@ -61,21 +61,20 @@ func (s *surfaceContext) note(args []string) int {
 		return status
 	}
 	writer := s.writeStore()
-	// The baseline for `body` IS the body, so one read answers both questions:
-	// what to append to, and what the write must find unchanged.
-	body, found := writer.ExpectedFor(item.ID, store.FieldBody)
+	// The append itself is the store's `body_append`, the same delta
+	// PATCH's `append_body` sends. Its baseline is the body it appends to, so
+	// this command keeps its narrow check: a body that changed between this
+	// read and the write refuses, exactly as it did when the command composed
+	// the new body itself.
+	body, found := writer.ExpectedFor(item.ID, store.FieldBodyAppend)
 	if !found {
 		if message := writer.LastLockError(); message != "" {
 			return abort(message)
 		}
 		return abort("cannot add note: task is missing or the file is invalid — run `tasks check`")
 	}
-	appended := text
-	if body != "" {
-		appended = body + "\n" + text
-	}
 	return s.finishPatch(writer.Patch(store.PatchRequest{
-		ID: item.ID, Field: store.FieldBody, Value: store.TextValue(appended),
+		ID: item.ID, Field: store.FieldBodyAppend, Value: store.TextValue(text),
 		Expected: body, Label: "note: " + item.Title, Today: today, Context: context,
 	}), args, item, "note", "failed to add note", flags["--json"])
 }

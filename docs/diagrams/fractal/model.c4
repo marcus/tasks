@@ -134,13 +134,13 @@ model {
     }
 
     routes = component 'Routes & Representation' {
-      description 'Explicit dispatch: health, meta, sections, tasks, decisions, delegation, notes, projects, recurrence explain. Documented /views, /history, /events are unserved.'
-      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
+      description 'Explicit dispatch: health, meta, sections, tasks, activate, decisions, delegation, notes, projects, recurrence explain. Write responses carry meta.effects (recurrence roll, completion cascade). Documented /views, /history, /events are unserved.'
+      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/activate.go', 'internal/api/effects.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
     }
 
     precondition = component 'ETag / If-Match Precondition' {
-      description 'Every task-resource write needs a quoted If-Match (428 missing, 422 malformed); stale is 412 with the current resource. Project writes: none.'
-      metadata { uid 'api.precondition' fractalColor '#B59669' evidence ['internal/api/request.go', 'internal/api/write.go', 'docs/adr/0007-concurrency-and-revisions.md'] }
+      description 'Every task-resource write needs a quoted If-Match (428 missing, 422 malformed); stale is 412 with the current resource. A PATCH of delta members only may send If-Match: * and applies under the store lock. Project writes: none.'
+      metadata { uid 'api.precondition' fractalColor '#B59669' evidence ['internal/api/request.go', 'internal/api/write.go', 'internal/api/deltas.go', 'docs/adr/0007-concurrency-and-revisions.md'] }
     }
 
     seams = adapter 'Checked Reader & Changeset Seams' {

@@ -389,8 +389,12 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 		}
 	}
 
+	// The delta members fold into the store's own delta ops, once each.
+	changes = append(changes, deltaChanges(body)...)
+
 	// The two temporal pairs are folded LAST and once each: a request may name
 	// the date, the time, or both, and all three produce one field change.
+	dated := []store.Change{}
 	for _, field := range []string{"scheduled", "deadline"} {
 		if !body.has(field) && !body.has(field+"_time") {
 			continue
@@ -403,9 +407,44 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 		if field == "deadline" {
 			patchField = store.FieldDeadline
 		}
-		changes = append(changes, store.Change{Field: patchField, Value: value})
+		dated = append(dated, store.Change{Field: patchField, Value: value})
 	}
-	return changes, nil
+	return append(changes, dateClearOf(dated, current)...), nil
+}
+
+// dateClearOf routes a request that only CLEARS dates through the store's one
+// date-clear operation — `tasks undate` — rather than a null per field.
+//
+// The bytes are the same either way: both drop the date, its time, and any
+// early lead release, and both retire a recurrence or lead whose last anchor
+// went. Taking one path is what keeps the two surfaces from drifting if that
+// ever changes. The operation refuses a date that is not there, and PATCH is
+// declarative — nulling an absent date is a no-op, not an error — so only the
+// dates the task CARRIES are cleared through it; the If-Match makes that the
+// state the write finds. A request that also SETS a date keeps the per-field
+// changes, because the store will not mix the two in one changeset.
+func dateClearOf(dated []store.Change, current store.Item) []store.Change {
+	clearing := []string{}
+	for _, change := range dated {
+		if !change.Value.IsNone() {
+			return dated
+		}
+		carried := current.Scheduled != ""
+		kind := "scheduled"
+		if change.Field == store.FieldDeadline {
+			carried, kind = current.Deadline != "", "deadline"
+		}
+		if carried {
+			clearing = append(clearing, kind)
+		}
+	}
+	switch len(clearing) {
+	case 0:
+		return dated
+	case 1:
+		return []store.Change{{Field: store.FieldDateClear, Value: store.TextValue(clearing[0])}}
+	}
+	return []store.Change{{Field: store.FieldDateClear, Value: store.NoValue()}}
 }
 
 func formalLinks(raw json.RawMessage) ([]links.FormalLink, error) {

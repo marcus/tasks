@@ -308,6 +308,14 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		return s.decideProposal(request, id, match[2], requestID)
 	}
 
+	if match := activatePath.FindStringSubmatch(path); match != nil && method == http.MethodPost {
+		id, err := validTaskID(match[1])
+		if err != nil {
+			return response{}, err
+		}
+		return s.activateTask(request, id, requestID)
+	}
+
 	if match := delegationPath.FindStringSubmatch(path); match != nil && method == http.MethodPost {
 		id, err := validTaskID(match[1])
 		if err != nil {
@@ -379,6 +387,7 @@ var (
 	decisionPath   = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/(approve|reject|unreject)$`)
 	delegationPath = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/(delegate|undelegate|claim|release)$`)
 	workRefPath    = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/work_ref$`)
+	activatePath   = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/activate$`)
 	// The briefing has its own route for the same reason work_ref does: an
 	// owner correcting instructions should not have to restate the delegation.
 	delegationNotePath = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/delegation_note$`)
@@ -429,7 +438,7 @@ func routeName(path string) string {
 }
 
 var (
-	actionRoute   = regexp.MustCompile(`^/api/v1/tasks/[^/]+/(delegate|undelegate|claim|release|work_ref|delegation_note)$`)
+	actionRoute   = regexp.MustCompile(`^/api/v1/tasks/[^/]+/(delegate|undelegate|claim|release|work_ref|delegation_note|activate)$`)
 	completeRoute = regexp.MustCompile(`^/api/v1/projects/[^/]+/complete$`)
 	dropRoute     = regexp.MustCompile(`^/api/v1/projects/[^/]+/drop$`)
 	reopenRoute   = regexp.MustCompile(`^/api/v1/projects/[^/]+/reopen$`)

@@ -261,6 +261,46 @@ func (a *Application) UpdateTask(id string, changes []store.Change, label string
 	})}, true
 }
 
+// ActivateCommand makes one task available now — `tasks activate`, the TUI's
+// `z now`, and `POST /tasks/{id}/activate`.
+//
+// ExpectedRevision is the whole-task revision the caller read. The CLI reads
+// its own just before the write; HTTP carries the client's If-Match. Empty
+// means no precondition, which only a caller with its own guard should send.
+type ActivateCommand struct {
+	ID               string
+	ExpectedRevision string
+	// HistoryLabel names the undo step; empty takes the store's
+	// "activate: <title>", which is the CLI's spelling.
+	HistoryLabel string
+}
+
+// ActivateTask releases a task's own hold in one write and one undo step: the
+// indefinite marker goes, a FUTURE available-from date goes with it, and a past
+// one stays, because it is history rather than a gate. A lead or recurring task
+// keeps every date and records a one-occurrence release instead (`lead_skip`),
+// since its anchor is what the next window is measured from.
+//
+// All of that is the store's `activate` field. This operation exists so every
+// surface names the same one, rather than each composing its own approximation
+// out of `deferred` and `scheduled` — which drops a past start date and cannot
+// express the lead release at all.
+func (a *Application) ActivateTask(command ActivateCommand, operation *OperationContext) Outcome {
+	if trimmed(command.ID) == "" {
+		return invalid("task id is required")
+	}
+	placer, ok := a.store().(Placer)
+	if !ok {
+		return unsupported("activate a task")
+	}
+	return Outcome{MutationResult: placer.ApplyChangeset(store.Changeset{
+		ID:               command.ID,
+		Changes:          []store.Change{{Field: store.FieldActivate, Value: store.BoolValue(true)}},
+		ExpectedRevision: command.ExpectedRevision, HistoryLabel: command.HistoryLabel,
+		Today: a.today(operation), Context: a.contextFor(operation),
+	})}
+}
+
 // MoveTask relocates one subtree, guarded by the revision the caller read.
 func (a *Application) MoveTask(id string, placement store.Placement, label string,
 	operation *OperationContext) (Outcome, bool) {
