@@ -114,6 +114,7 @@ func (s *Server) meta(request *http.Request) (response, error) {
 		w.KeyBool("redo", false)
 		w.KeyBool("archive_sweep", false)
 		w.KeyBool("events", false)
+		w.KeyBool("views", true)
 		w.EndObject()
 		w.EndObject()
 	}, read.Revision)
@@ -133,10 +134,8 @@ func (s *Server) sections(request *http.Request) (response, error) {
 	w := jsonout.New()
 	writeSuccess(w, func(w *jsonout.Writer) {
 		w.BeginArray()
-		for _, parsed := range read.Queries.Snapshot().LiveRecords() {
-			if parsed.String("type") == "section" {
-				writeSection(w, parsed)
-			}
+		for _, section := range read.Queries.Sections() {
+			writeSection(w, section)
 		}
 		w.EndArray()
 	}, read.Revision)

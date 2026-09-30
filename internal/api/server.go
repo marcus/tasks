@@ -332,6 +332,10 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		return s.putDelegationNote(request, id, requestID)
 	}
 
+	if match := viewPath.FindStringSubmatch(path); match != nil && method == http.MethodGet {
+		return s.view(request, match[1])
+	}
+
 	switch {
 	case method == http.MethodGet && path == "/api/v1/projects":
 		return s.listProjects(request)
@@ -371,7 +375,15 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 		}
 	}
 
-	return response{}, errorOf(404, "not_found")
+	return response{}, unknownRoute()
+}
+
+// unknownRoute is the answer for a method and path nothing here serves. It
+// shares the not_found code with a missing task, but not its sentence: "No
+// task with that id" would send a client hunting for a bad id when the
+// endpoint itself is what is missing.
+func unknownRoute() error {
+	return errorWith(404, "not_found", "No endpoint matches that method and path.")
 }
 
 var (
@@ -424,6 +436,9 @@ func routeName(path string) string {
 	}
 	if projectRoute.MatchString(path) {
 		return "/api/v1/projects/{id}"
+	}
+	if viewPath.MatchString(path) {
+		return "/api/v1/views/{name}"
 	}
 	return "unmatched"
 }

@@ -431,13 +431,33 @@ func delegationText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// writeSection is Representation.section.
-func writeSection(w *jsonout.Writer, parsed record.Record) {
+// writeSection is Representation.section: the record's own three members,
+// then its role, note and lifecycle. Every member is always present, null when
+// absent, so the schema can be strict.
+func writeSection(w *jsonout.Writer, section taskquery.SectionInfo) {
 	w.BeginObject()
-	w.KeyStrOrNull("id", parsed.String("id"))
-	w.KeyStr("title", parsed.String("title"))
-	w.KeyStrOrNull("parent_id", parsed.String("parent"))
+	writeSectionMembers(w, section)
 	w.EndObject()
+}
+
+func writeSectionMembers(w *jsonout.Writer, section taskquery.SectionInfo) {
+	w.KeyStrOrNull("id", section.ID)
+	w.KeyStr("title", section.Title)
+	w.KeyStrOrNull("parent_id", section.ParentID)
+	w.KeyStr("kind", section.Kind)
+	w.Key("body")
+	if section.HasBody {
+		w.Str(section.Body)
+	} else {
+		w.Null()
+	}
+	w.KeyStrOrNull("state", section.State)
+	w.Key("closed")
+	if section.HasClosed {
+		w.Str(section.Closed)
+	} else {
+		w.Null()
+	}
 }
 
 // writeProject is Representation.project: every field present with an explicit

@@ -225,6 +225,44 @@ func (a *Application) ReopenProject(id string, operation *OperationContext) Outc
 	return Outcome{MutationResult: store.MutationResult{Status: store.MutationOK}}
 }
 
+// SectionTarget is what a section action — rename, complete, drop, reopen,
+// archive — acts on: the rolled-up view a response reports, and the section's
+// structural role (taskquery.Section*), which decides whether the action is
+// allowed at all.
+type SectionTarget struct {
+	View taskquery.ProjectView
+	Role string
+}
+
+// Refusal is why this target cannot take the action, or "" when it can.
+func (t SectionTarget) Refusal(action string) string {
+	return taskquery.SectionActionRefusal(t.Role, action)
+}
+
+// SectionTargetResult resolves a section action's target with the change
+// token. It accepts every live section the Outline shows as a row — nested
+// sub-sections, saved lists, and areas with no open work today, as well as the
+// projects and areas the Projects listing admits — so an HTTP client can act on
+// exactly the sections the TUI can. A section the listing admits reads through
+// ProjectView, so a project's kind and rollups are the same through either
+// route; everything else reads through SectionView.
+//
+// Resolution is not permission: the Inbox and the Projects heading resolve, and
+// Refusal is what turns an action on them away.
+func (a *Application) SectionTargetResult(id string, operation *OperationContext) ReadResult[SectionTarget] {
+	return checkedQuery(a, operation, func(queries *taskquery.Queries) (SectionTarget, bool) {
+		role, found := queries.SectionKind(id)
+		if !found {
+			return SectionTarget{}, false
+		}
+		view, found := queries.ProjectView(id)
+		if !found {
+			view, found = queries.SectionView(id)
+		}
+		return SectionTarget{View: view, Role: role}, found
+	})
+}
+
 // getSection validates the shared lifecycle target without imposing an
 // adapter's narrower vocabulary. CLI and HTTP project routes resolve only
 // projects, areas, and saved lists before they call this boundary; the Outline
