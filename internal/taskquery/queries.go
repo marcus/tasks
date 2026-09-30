@@ -66,6 +66,16 @@ type Queries struct {
 	linkShorthands map[string]string
 	linkSystems    map[string]string
 
+	// urgentDays is the deadline window QuadrantFor classifies against. It rides
+	// on the read model for the same reason the link configuration does: a
+	// surface that serializes a task resource should not need a second path to
+	// the configured `urgent_days`.
+	urgentDays int
+
+	// archiveByID indexes the archive items for ArchivedOn's ancestor walk. It
+	// is built on first use, because only an archive read ever asks.
+	archiveByID map[string]store.Item
+
 	// Project rollup caches. The section list and the Projects root are scanned
 	// once per reader: `projects` builds a view per section, and each view walks
 	// a subtree, so re-deriving these per view would be quadratic in file size.
@@ -89,6 +99,16 @@ func WithLinkConfig(shorthands, systems map[string]string) Option {
 	}
 }
 
+// WithUrgentDays supplies the configured `urgent_days` window. A value below
+// one keeps DefaultUrgentDays, the same fallback every surface applies.
+func WithUrgentDays(days int) Option {
+	return func(q *Queries) {
+		if days > 0 {
+			q.urgentDays = days
+		}
+	}
+}
+
 type availabilityKey struct {
 	source store.Source
 	line   int
@@ -109,6 +129,8 @@ func New(snapshot *store.Snapshot, context temporal.Context, options ...Option) 
 		tree:     BuildTree(liveRecords, items),
 		records:  map[store.Source]map[int]record.Record{},
 		cache:    map[availabilityKey]Availability{},
+
+		urgentDays: DefaultUrgentDays,
 	}
 	for _, group := range []struct {
 		source  store.Source
@@ -778,18 +800,26 @@ func allTags(item store.Item) []string {
 
 // delegationMatch: `--delegated` is any marker at all — human or agent, ready
 // or claimed — so the owner sees every handed-off task in one list.
-// `--agent-ready` is the narrower claimable queue: agent kind, unclaimed,
-// accepted live state, and actually workable right now.
+// `--agent-ready` is the narrower claimable queue AgentReady defines.
 func (q *Queries) delegationMatch(item store.Item, filter query.Filter) bool {
 	if !filter.DelegatedOnly() && !filter.AgentReadyOnly() {
 		return true
 	}
-	value := decodeDelegation(item.Delegation)
 	if filter.DelegatedOnly() {
-		return record.DelegationObject(value)
+		return record.DelegationObject(decodeDelegation(item.Delegation))
 	}
-	return record.DelegationReady(value) && item.Source == store.SourceLive &&
-		isOpen(item.State) && q.AvailabilityFor(item).Available()
+	return q.AgentReady(item)
+}
+
+// AgentReady is the one definition of claimable agent work: an agent marker
+// nobody has claimed, on a live task in an accepted open state that is
+// actually workable right now. `list --agent-ready`, `scope=agent_ready`, and
+// the task resource's `agent_ready` all read this, so a client never has to
+// re-derive the rule.
+func (q *Queries) AgentReady(item store.Item) bool {
+	return record.DelegationReady(decodeDelegation(item.Delegation)) &&
+		item.Source == store.SourceLive && isOpen(item.State) &&
+		q.AvailabilityFor(item).Available()
 }
 
 func decodeDelegation(raw json.RawMessage) any {

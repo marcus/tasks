@@ -42,9 +42,14 @@ type Item struct {
 	LeadSkip      string
 	Delegation    json.RawMessage
 	FormalLinks   []links.FormalLink
-	Parent        string
-	HasParent     bool
-	Source        Source
+	// Updated is the stored last-write stamp (`<RFC3339 UTC>#<device>`)
+	// exactly as the record holds it, or "" when absent. It is read-only
+	// bookkeeping here: the store stamps it on write, and it is never part of a
+	// revision.
+	Updated   string
+	Parent    string
+	HasParent bool
+	Source    Source
 }
 
 // Snapshot is a coherent view of the task files. A caller can hold one while
@@ -232,6 +237,7 @@ func buildItem(parsed record.Record, source Source) Item {
 		LeadSkip:      stringField(parsed, "lead_skip"),
 		Delegation:    fieldRaw(parsed, record.DelegationField),
 		FormalLinks:   semanticLinks(parsed),
+		Updated:       stringField(parsed, "updated"),
 		Parent:        parent,
 		HasParent:     hasParent,
 		Source:        source,

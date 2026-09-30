@@ -160,7 +160,10 @@ func buildServer(paths config.Paths, env determinism.Env, port int) (*api.Server
 		}
 		return built
 	}
-	queryOptions := []taskquery.Option{taskquery.WithLinkConfig(paths.Links, paths.LinkSystems)}
+	queryOptions := []taskquery.Option{
+		taskquery.WithLinkConfig(paths.Links, paths.LinkSystems),
+		taskquery.WithUrgentDays(paths.UrgentDays),
+	}
 
 	app, err := application.New(application.Options{
 		Factory:         func() application.Store { return newStore() },

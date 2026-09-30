@@ -3277,6 +3277,7 @@ components:
         - availability_reason
         - availability_blocker_id
         - available_at
+        - quadrant
         - recurrence
         - recurrence_human
         - lead
@@ -3284,15 +3285,19 @@ components:
         - lead_opens
         - lead_opens_at
         - body
+        - created
+        - updated
         - closed
         - rejected
         - archived
+        - archived_on
         - project
         - child_count
         - descendant_count
         - formal_links
         - links
         - delegation
+        - agent_ready
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/TaskId" }
@@ -3301,7 +3306,9 @@ components:
           description: |
             Opaque optimistic-concurrency token, mirrored as the HTTP ETag.
             Compare for equality only; the internal structure is not part of
-            this contract (see ADR-0007).
+            this contract (see ADR-0007). It covers every writable own field,
+            `formal_links` included, so a write made under a stale `If-Match`
+            is refused with 412 rather than overwriting a concurrent edit.
         source:
           type: string
           enum: [live, archive]
@@ -3318,7 +3325,10 @@ components:
         depth:
           type: integer
           minimum: 0
-          description: Nesting depth below its section (0 for a top-level task).
+          description: |
+            Number of task ancestors: 0 for a task directly under a section,
+            however deeply that section nests (a project under "Projects"
+            counts the same as Inbox), 1 for its child, and so on.
         state: { $ref: "#/components/schemas/State" }
         priority: { $ref: "#/components/schemas/Priority" }
         title:
@@ -3368,6 +3378,19 @@ components:
           type: [string, "null"]
           format: date-time
           readOnly: true
+        quadrant:
+          type: [string, "null"]
+          enum: [Q1, Q2, Q3, Q4, null]
+          readOnly: true
+          description: |
+            The Eisenhower quadrant, by the same classifier `tasks quadrants`
+            uses: important is priority A or B or the `important` tag; urgent
+            is a deadline within the configured `urgent_days`
+            (`Meta.urgent_days`, overdue included) or the `urgent` tag. `Q1`
+            important and urgent, `Q2` important only, `Q3` urgent only, `Q4`
+            neither. Null for a proposed, closed, or archived task. Unlike the
+            quadrants view, an open task that is not currently available still
+            carries its quadrant.
         recurrence:
           type: [string, "null"]
           description: |
@@ -3429,6 +3452,28 @@ components:
           type: array
           description: The task's own notes, split to lines. A child's body never leaks in.
           items: { type: string }
+        created:
+          allOf:
+            - $ref: "#/components/schemas/IsoDate"
+          readOnly: true
+          description: |
+            The day the task was captured, or null. The store keeps no
+            separate creation stamp, so this is read from the
+            `Captured [YYYY-MM-DD].` note every capture writes as the first
+            body line: the first body line of that shape with a real calendar
+            date wins. A body edit that removes the note leaves the task
+            undated (null) rather than approximated.
+        updated:
+          type: [string, "null"]
+          format: date-time
+          readOnly: true
+          description: |
+            When the task record last changed, as a UTC instant, from the
+            store's per-record last-write stamp. A write that changes this
+            record's own stored fields moves it; a change to a child, or a
+            reorder that leaves this record's fields alone, does not. Null
+            when the record carries no valid stamp (not written since stamping
+            began, or hand-edited). Not part of `revision`.
         closed: { $ref: "#/components/schemas/IsoDate" }
         rejected:
           allOf:
@@ -3442,6 +3487,15 @@ components:
         archived:
           type: boolean
           description: True when this resource comes from the read-only archive.
+        archived_on:
+          allOf:
+            - $ref: "#/components/schemas/IsoDate"
+          readOnly: true
+          description: |
+            The day this task was swept into the archive, or null for a live
+            task. A sweep stamps the subtree root, so a descendant reports its
+            nearest stamped ancestor's date; an archived record with no stamp
+            anywhere above it reports null.
         project:
           type: [string, "null"]
           description: Nearest open project (a live parent task, else the enclosing section).
@@ -3481,6 +3535,15 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/Delegation" }
             - { type: "null" }
+        agent_ready:
+          type: boolean
+          readOnly: true
+          description: |
+            True when the task is in the claimable agent queue — exactly the
+            rule `GET /tasks?scope=agent_ready` and `tasks list --agent-ready`
+            apply: an agent delegation with status `ready` (unclaimed), on a
+            live task in an open state (INBOX, TODO, NEXT, WAITING) that is
+            currently `available`.
 
     DelegationKind:
       type: string

@@ -229,12 +229,13 @@ func TestTaskRepresentationAndSourceExactLookup(t *testing.T) {
 	task := live.data()
 
 	expected := []string{
-		"archived", "availability_blocker_id", "availability_reason", "available", "available_at",
-		"body", "child_count", "closed", "contexts", "deadline", "deadline_time", "deferred",
-		"delegation", "depth", "descendant_count", "formal_links", "id", "lead", "lead_human", "lead_opens",
-		"lead_opens_at", "links", "parent_id", "priority", "project", "recurrence",
-		"recurrence_human", "rejected", "revision", "scheduled", "scheduled_time", "section_id", "source",
-		"state", "tags", "title",
+		"agent_ready", "archived", "archived_on", "availability_blocker_id", "availability_reason",
+		"available", "available_at", "body", "child_count", "closed", "contexts", "created",
+		"deadline", "deadline_time", "deferred", "delegation", "depth", "descendant_count",
+		"formal_links", "id", "lead", "lead_human", "lead_opens", "lead_opens_at", "links",
+		"parent_id", "priority", "project", "quadrant", "recurrence", "recurrence_human", "rejected",
+		"revision", "scheduled", "scheduled_time", "section_id", "source", "state", "tags", "title",
+		"updated",
 	}
 	keys := make([]string, 0, len(task))
 	for key := range task {

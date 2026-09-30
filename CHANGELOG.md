@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **The Task resource carries its lifecycle dates, quadrant, and agent readiness.** (#34) `GET /api/v1/tasks/{id}` and every task row now include `created` (the day from the `Captured [YYYY-MM-DD].` note a capture writes — the store keeps no separate creation stamp, so a body edit that removes the note reports null), `updated` (the UTC instant of the record's stored last-write stamp, null when it has none), `archived_on` (the day an archived task's subtree was swept, inherited from the stamped subtree root), `quadrant` (`Q1`–`Q4` from the same classifier and configured `urgent_days` as `tasks quadrants`, null for proposed, closed, and archived tasks), and `agent_ready` (the exact rule `scope=agent_ready` and `tasks list --agent-ready` apply, now one shared function). `archived: true` is unchanged. A client can sort by recently touched and render a detail pane without re-deriving any of these rules.
+
+### Bug Fixes
+
+- **Concurrent `formal_links` edits no longer overwrite each other.** (#31) The stored formal links were not part of a task's revision, so two clients could each `PATCH formal_links` under the same `If-Match` and the second silently replaced the first's list. Links are now in the revision's own-field digest and the stale write gets `412 stale_revision`. Every stored task's revision changes once on upgrade, so an ETag a client held from before the upgrade must be re-read.
+- **`Task.depth` counts only task ancestors.** (#32) Section ancestors above the nearest section were counted too, so every top-level task in a project (a section under "Projects") reported `depth: 1` while an Inbox task reported 0. Depth is now the number of task ancestors, matching what `parent_id` implies.
+
 ## [1.17.0] - 2026-09-02
 
 ### Features
