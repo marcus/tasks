@@ -28,3 +28,6 @@ coverage.out
 *~
 \#*\#
 .\#*
+
+# graphify knowledge graph cache (rebuilt by clara-home bin/graphify-refresh)
+graphify-out/
