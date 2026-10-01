@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **`tasks show` reads archived tasks.** `tasks show --archived <ref>` (`-x`, as on `list`) resolves any ref (id, title, or `L<line>` in `archive.jsonl`) against the archive, and `tasks show <id>` falls back to the archive when the ref is an archived task's id and nothing in the live file — no id, no title — could match it. That fallback is a stricter form of the one `GET /api/v1/tasks/{id}` gained in 1.19.0, because a CLI ref can also be a title fragment. An archived task shows `source: archive`; `--json` already carried `source`.
+
 ## [1.19.0] - 2026-09-30
 
 ### Features

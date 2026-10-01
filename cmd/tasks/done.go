@@ -29,10 +29,14 @@ var linePattern = regexp.MustCompile(`(?i)\AL(\d+)\z`)
 type refScope struct {
 	includeDone     bool
 	includeProposed bool
+	// archive resolves against archive.jsonl instead of the live file, where
+	// every task is closed and so every state is in scope. Only reads set it:
+	// archived tasks are not writable.
+	archive bool
 }
 
 func (r refScope) admits(state string) bool {
-	if r.includeDone {
+	if r.includeDone || r.archive {
 		return true
 	}
 	if contains(taskquery.OpenStates(), state) {
@@ -43,6 +47,8 @@ func (r refScope) admits(state string) bool {
 
 func (r refScope) description() string {
 	switch {
+	case r.archive:
+		return "an archived task"
 	case r.includeDone:
 		return "a live task"
 	case r.includeProposed:
@@ -60,6 +66,9 @@ func (r refScope) description() string {
 // can see in the file is the least actionable answer there is.
 func resolveRef(queries *taskquery.Queries, ref string, scope refScope) (store.Item, int) {
 	all := queries.LiveItems()
+	if scope.archive {
+		all = queries.ArchiveItems()
+	}
 	items := []store.Item{}
 	for _, item := range all {
 		if scope.admits(item.State) {
@@ -80,7 +89,10 @@ func resolveRef(queries *taskquery.Queries, ref string, scope refScope) (store.I
 			}
 		}
 		qualifier := "open "
-		if scope.includeDone {
+		switch {
+		case scope.archive:
+			qualifier = "archived "
+		case scope.includeDone:
 			qualifier = ""
 		}
 		return store.Item{}, refFailed(fmt.Sprintf("no %stask with a headline on line %s", qualifier, match[1]))
@@ -109,7 +121,14 @@ func resolveRef(queries *taskquery.Queries, ref string, scope refScope) (store.I
 	case len(matches) == 1:
 		return matches[0], 0
 	case len(matches) > 1:
-		lines := []string{fmt.Sprintf("ambiguous: %s — matches %d tasks:", ref, len(matches))}
+		header := fmt.Sprintf("ambiguous: %s — matches %d tasks:", ref, len(matches))
+		if scope.archive {
+			// The L-numbers below are archive.jsonl lines, which only resolve
+			// again under --archived.
+			header = fmt.Sprintf("ambiguous: %s — matches %d archived tasks (lines in archive.jsonl; refine with --archived):",
+				ref, len(matches))
+		}
+		lines := []string{header}
 		for _, item := range matches {
 			lines = append(lines, fmt.Sprintf("  L%d: %s", item.Line, taskquery.Headline(item)))
 		}
@@ -134,6 +153,32 @@ func resolveRef(queries *taskquery.Queries, ref string, scope refScope) (store.I
 		return store.Item{}, refFailed(strings.Join(lines, "\n"))
 	}
 	return store.Item{}, refFailed("no match: " + ref)
+}
+
+// archivedOnlyID is the archive fallback `show` applies to an exact id. It is
+// a stricter form of the one `GET /api/v1/tasks/{id}` applies: the API takes
+// stable ids only, so it falls back whenever no live task has the id, but a
+// CLI ref is also a case-insensitive id and a title fragment, so here the
+// archive answers only when nothing in the live file — no id and no title —
+// could match the ref. Anything the live file could answer is left to
+// resolveRef, so the live file always wins.
+func archivedOnlyID(queries *taskquery.Queries, ref string) (store.Item, bool) {
+	needle := query.Downcase(strings.TrimSpace(ref))
+	if needle == "" {
+		return store.Item{}, false
+	}
+	for _, item := range queries.LiveItems() {
+		if (item.HasID && query.Downcase(item.ID) == needle) ||
+			strings.Contains(query.Downcase(item.Title), needle) {
+			return store.Item{}, false
+		}
+	}
+	for _, item := range queries.ArchiveItems() {
+		if item.HasID && query.Downcase(item.ID) == needle {
+			return item, true
+		}
+	}
+	return store.Item{}, false
 }
 
 func refOutsideScope(ref string, item store.Item, scope refScope) int {

@@ -20,21 +20,42 @@ import (
 // with mutation-flavoured error text and a misleading rollback hint — nothing
 // was being written, so nothing can have been rolled back.
 func (s *surfaceContext) show(args []string) int {
-	flags, rest, err := takeFlags(args, "--json", "--include-done")
+	// `-x` is `--archived`'s short form, as it is on `list`.
+	normalized := make([]string, len(args))
+	for index, arg := range args {
+		if arg == "-x" {
+			arg = "--archived"
+		}
+		normalized[index] = arg
+	}
+	flags, rest, err := takeFlags(normalized, "--json", "--include-done", "--archived")
 	if err != nil {
 		return abort(err.Error())
 	}
 	if len(rest) == 0 || strings.TrimSpace(rest[0]) == "" {
-		return abort("usage: tasks show <ref>")
+		return abort("usage: tasks show <ref> [--include-done | --archived] [--json]")
+	}
+	if flags["--archived"] && flags["--include-done"] {
+		return abort("--archived and --include-done are exclusive: --archived already reads every archived task")
 	}
 	queries, status := s.readQueries(args, "show")
 	if status != 0 {
 		return status
 	}
-	item, refStatus := resolveRef(queries, rest[0],
-		refScope{includeDone: flags["--include-done"], includeProposed: true})
-	if refStatus != 0 {
-		return refStatus
+	// An archived task is read with --archived, or by its exact id when the
+	// live file has nothing the ref could mean.
+	item, archived := store.Item{}, false
+	if !flags["--archived"] {
+		item, archived = archivedOnlyID(queries, rest[0])
+	}
+	if !archived {
+		var refStatus int
+		item, refStatus = resolveRef(queries, rest[0], refScope{
+			includeDone: flags["--include-done"], includeProposed: true, archive: flags["--archived"],
+		})
+		if refStatus != 0 {
+			return refStatus
+		}
 	}
 
 	found := queries.Links(item)
@@ -70,6 +91,9 @@ func (s *surfaceContext) show(args []string) int {
 	out(taskquery.Headline(item))
 	if item.ID != "" {
 		out("  id:        " + item.ID)
+	}
+	if item.Source == store.SourceArchive {
+		out("  source:    archive")
 	}
 	if hasProject {
 		out("  project:   " + project)

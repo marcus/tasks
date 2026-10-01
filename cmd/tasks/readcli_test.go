@@ -791,3 +791,75 @@ func TestDocLinkPatternsClassifyLinksAsDoc(t *testing.T) {
 		t.Fatalf("config --json =\n%s", config.stdout)
 	}
 }
+
+// `show` reads archived tasks: an exact archived id falls back to the archive
+// as GET /api/v1/tasks/{id} does, and --archive resolves any ref there.
+func TestShowReadsArchivedTasks(t *testing.T) {
+	dir := seedStore(t, `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Work"}
+{"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"NEXT","title":"Live work"}
+{"type":"task","id":"cccc0001","parent":"aaaa0001","state":"NEXT","title":"Live twin"}
+{"type":"task","id":"aaaa0003","parent":"aaaa0001","state":"NEXT","title":"Follow up dddd0002"}
+`)
+	archive := `{"type":"meta","version":2}
+{"type":"section","id":"dddd0000","title":"Archive"}
+{"type":"task","id":"dddd0001","parent":"dddd0000","state":"DONE","title":"Shipped the report","closed":"2026-07-02","body":"Sent to finance."}
+{"type":"task","id":"cccc0001","parent":"dddd0000","state":"DONE","title":"Archived twin","closed":"2026-07-01"}
+{"type":"task","id":"dddd0002","parent":"dddd0000","state":"DONE","title":"Shipped the slides","closed":"2026-07-03"}
+`
+	if err := os.WriteFile(filepath.Join(dir, "archive.jsonl"), []byte(archive), 0o644); err != nil {
+		t.Fatalf("seed archive: %v", err)
+	}
+
+	byID := runCLI(t, dir, "show", "dddd0001")
+	if byID.status != 0 || !strings.Contains(byID.stdout, "Shipped the report") ||
+		!strings.Contains(byID.stdout, "  source:    archive") || !strings.Contains(byID.stdout, "Sent to finance.") {
+		t.Fatalf("exit %d stdout:\n%s\nstderr: %s", byID.status, byID.stdout, byID.stderr)
+	}
+	if strings.Contains(byID.stdout, "project:") || !strings.Contains(byID.stdout, "closed") {
+		t.Fatalf("archived task should show no project and read as closed:\n%s", byID.stdout)
+	}
+	if upper := runCLI(t, dir, "show", "DDDD0001"); !strings.Contains(upper.stdout, "Shipped the report") {
+		t.Fatalf("upper-case id: %q %q", upper.stdout, upper.stderr)
+	}
+	// A live title that mentions the id keeps the ref in the live file.
+	if mentioned := runCLI(t, dir, "show", "dddd0002"); !strings.Contains(mentioned.stdout, "Follow up dddd0002") {
+		t.Fatalf("live title mention: %q %q", mentioned.stdout, mentioned.stderr)
+	}
+	// L<line> under --archived names an archive line (line 3: "Shipped the report").
+	if line := runCLI(t, dir, "show", "-x", "L3"); !strings.Contains(line.stdout, "Shipped the report") {
+		t.Fatalf("-x L3: %q %q", line.stdout, line.stderr)
+	}
+	ambiguous := runCLI(t, dir, "show", "-x", "shipped the")
+	if ambiguous.status == 0 || !strings.Contains(ambiguous.stderr, "archived tasks (lines in archive.jsonl") {
+		t.Fatalf("archive ambiguity: exit %d stderr %q", ambiguous.status, ambiguous.stderr)
+	}
+	asJSON := runCLI(t, dir, "show", "dddd0001", "--json")
+	if !strings.Contains(asJSON.stdout, `"source":"archive"`) {
+		t.Fatalf("json = %s", asJSON.stdout)
+	}
+
+	// The live task wins a shared id; --archive reaches the other one.
+	if live := runCLI(t, dir, "show", "cccc0001"); !strings.Contains(live.stdout, "Live twin") {
+		t.Fatalf("shared id stdout:\n%s", live.stdout)
+	}
+	if archived := runCLI(t, dir, "show", "cccc0001", "--archived"); !strings.Contains(archived.stdout, "Archived twin") {
+		t.Fatalf("--archive id stdout:\n%s", archived.stdout)
+	}
+
+	// --archive resolves titles too, and only in the archive.
+	if title := runCLI(t, dir, "show", "-x", "the report"); title.status != 0 || !strings.Contains(title.stdout, "Shipped the report") {
+		t.Fatalf("--archive title: exit %d stdout %q stderr %q", title.status, title.stdout, title.stderr)
+	}
+	if miss := runCLI(t, dir, "show", "--archived", "Live work"); miss.status == 0 {
+		t.Fatalf("--archive found a live task: %s", miss.stdout)
+	}
+	// A title fragment never falls back: the archive is read only by exact id.
+	if fuzzy := runCLI(t, dir, "show", "Shipped"); fuzzy.status == 0 {
+		t.Fatalf("a fuzzy ref fell back to the archive: %s", fuzzy.stdout)
+	}
+	if both := runCLI(t, dir, "show", "dddd0001", "--archived", "--include-done"); both.status == 0 ||
+		!strings.Contains(both.stderr, "exclusive") {
+		t.Fatalf("exit %d stderr %q", both.status, both.stderr)
+	}
+}

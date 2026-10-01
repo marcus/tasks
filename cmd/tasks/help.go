@@ -82,6 +82,8 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"                           agent work, ranked by priority then date" + "\n" +
 	"                           --body/-b widens /text search into task notes" + "\n" +
 	"  show      s <ref>        one task in full (headline + notes + links)" + "\n" +
+	"                           --archived/-x reads archive.jsonl; an archived" + "\n" +
+	"                           id nothing live matches also falls back there" + "\n" +
 	"  links     urls [<ref>]   links in task notes, by system (slack, jira, …)" + "\n" +
 	"                           --system <name> filters · --all widens the listing" + "\n" +
 	"                           to done + archived (<ref> stays live-file) · --json" + "\n" +
