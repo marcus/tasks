@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **Find the tasks that carry a link.** (#37) `GET /api/v1/tasks?link=<url>` keeps the tasks whose `links` — formal, title, or body — include that URL, and composes with `scope` (`archived` and `all` included) and every other filter, so "does this Slack thread already have a task?" is one request instead of paging every task. The CLI twin is `tasks links --url <url>` (with `--all` to reach done and archived tasks). Both match through one rule, `links.MatchKey`: scheme and host case, a leading `www.`, a default port, the fragment, a trailing slash, `utm_*`/`fbclid`/`gclid`, and Slack's `thread_ts`/`cid` on a Slack permalink are ignored, percent-escapes are decoded, and the remaining query is compared order-insensitively; a query that addresses a resource (`?p=/notes/review.md`) still distinguishes links. `/meta` advertises `capabilities.link_filter`.
+- **Links into local documents can be classified as `doc`.** (#38) The new `doc_link_patterns` config (whitespace-separated whole-URL patterns, `*` wildcard — for example `doc_link_patterns = http://127.0.0.1:8080/open?p=*`) classifies matching links as the `doc` system ahead of any host row, so `tasks links --system doc` and the API's `links[].system` tell "where this task came from" apart from context links without client heuristics. `/meta` and `tasks config` publish the patterns. The classifier also names `file:` URLs and relative `.md`/`.txt` paths `doc`, but stored and extracted links remain `http`/`https` only, so today a document link reaches a task through a pattern-matched web URL.
+
+### Behavior changes
+
+- **`GET /api/v1/tasks/{id}` finds an archived task.** (#36) Without `source`, the read now falls back to the archive when no live task has the id, returning the resource with `source: "archive"`, so a client resolving a cited id no longer pages the archived scope. A client that read a `404` there as "this task left the live file" should check `source` instead. The live task still wins when both share an id, and an explicit `source=live` or `source=archive` stays exact. Writes keep refusing archived tasks. `/meta` advertises `capabilities.archive_fallback`.
+
 ## [1.18.0] - 2026-09-30
 
 ### Features

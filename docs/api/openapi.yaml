@@ -173,6 +173,7 @@ paths:
                         jira: "https://jira.example.com/browse/%s"
                       link_systems:
                         forge: "git.example.com"
+                      doc_link_patterns: ["http://127.0.0.1:8080/open?p=*"]
                       capabilities:
                         projects: true
                         undo: true
@@ -185,6 +186,8 @@ paths:
                         date_parse: true
                         lead_explain: true
                         outline: true
+                        link_filter: true
+                        archive_fallback: true
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "503":
@@ -323,6 +326,21 @@ paths:
             delegation slice.
           required: false
           schema: { type: boolean }
+        - name: link
+          in: query
+          description: |
+            Keep only tasks whose `links` (formal, title, or body) include this
+            URL — "does this Slack thread already have a task?". Intersects
+            with `scope` and every other filter; `scope=all` searches live and
+            archived tasks. Matching is the same `links.MatchKey` rule as
+            `tasks links --url`: scheme and host case, a leading `www.`, a
+            default port, the fragment, a trailing slash, tracking parameters
+            (`utm_*`, `fbclid`, `gclid`), and Slack's `thread_ts`/`cid` on a
+            Slack permalink are ignored; percent-escapes are decoded and the
+            remaining query is compared order-insensitively. A blank value is
+            `422`.
+          required: false
+          schema: { type: string, minLength: 1 }
         - name: state
           in: query
           description: |
@@ -614,17 +632,18 @@ paths:
       operationId: getTask
       summary: One full task resource.
       description: |
-        Returns one live task by default. Pass `source=archive` to read an
-        archived resource; archived resources are read-only.
+        Without `source`, returns the live task with this id, or the archived
+        one (`source: "archive"`) when no live task has it. Live and archive
+        may share an id; the live task wins. Pass `source` to read exactly one
+        of them. Archived resources are read-only.
       parameters:
         - name: source
           in: query
-          description: Read the live task (default) or an explicitly archived one.
+          description: Read only the live task or only the archived one. Omitted, live is tried first, then the archive.
           required: false
           schema:
             type: string
             enum: [live, archive]
-            default: live
       responses:
         "200":
           description: The task resource.
@@ -4006,7 +4025,8 @@ components:
                  closed_states, priorities, delegation_kinds, delegation_modes,
                  delegation_statuses, max_depth, urgent_days,
                  timezone, time_format, tzdb_version, temporal_precision,
-                 date_order, link_shorthands, link_systems, capabilities]
+                 date_order, link_shorthands, link_systems, doc_link_patterns,
+                 capabilities]
       additionalProperties: false
       properties:
         api_version: { type: string }
@@ -4078,6 +4098,17 @@ components:
             classification, so a client can name `links[].system` the way the
             server does. Empty object when none are configured.
           additionalProperties: { type: string }
+        doc_link_patterns:
+          type: array
+          description: |
+            The configured `doc_link_patterns`: whole-URL patterns, `*`
+            matching any run of characters, that classify a link as the `doc`
+            system ahead of any host row — for example
+            `http://127.0.0.1:8080/open?p=*`. `doc` marks a link into a local
+            document (where the task came from) as opposed to a context link.
+            Links on a task are `http`/`https` URLs, so these patterns are how
+            a link becomes `doc` today. Empty array when none are configured.
+          items: { type: string }
         capabilities:
           type: object
           description: |
@@ -4119,6 +4150,14 @@ components:
             date_parse:
               type: boolean
               description: "`GET /dates/parse`."
+            link_filter:
+              type: boolean
+              description: "`GET /tasks` accepts `link=<url>`."
+            archive_fallback:
+              type: boolean
+              description: |
+                `GET /tasks/{id}` without `source` falls back to the archive
+                when no live task has the id.
             lead_explain:
               type: boolean
               description: "`GET /lead/explain`."

@@ -146,7 +146,8 @@ func (s *surfaceContext) readQueries(args []string, action string) (*taskquery.Q
 	// read it, and a read model built without it would silently answer "no
 	// links" for every task whose note uses a configured shorthand.
 	return taskquery.New(snapshot, context,
-		taskquery.WithLinkConfig(s.paths.Links, s.paths.LinkSystems)), 0
+		taskquery.WithLinkConfig(s.paths.Links, s.paths.LinkSystems),
+		taskquery.WithDocLinkPatterns(s.paths.DocLinkPatterns)), 0
 }
 
 // format is one row's headline: the priority cookie, the title, and the

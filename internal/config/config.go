@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/marcus/tasks/internal/determinism"
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/timezones"
 )
@@ -64,9 +65,12 @@ type Paths struct {
 	// a human should read it. It is a plain []string rather than a
 	// record.ModeVocabulary because config resolves SETTINGS; Modes turns it
 	// into the value the store and the checker carry.
-	DelegationModes   []string
-	Links             map[string]string
-	LinkSystems       map[string]string
+	DelegationModes []string
+	Links           map[string]string
+	LinkSystems     map[string]string
+	// DocLinkPatterns are the configured `doc_link_patterns`: URL shapes
+	// (`*` wildcard) classified as the `doc` link system.
+	DocLinkPatterns   []string
 	Hostname          string
 	HostContext       string
 	HostContextSource string
@@ -132,7 +136,8 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 		Timezone: timezone, TimeFormat: timeFormat, TimezoneFallbackWarning: timezoneWarning,
 		DateOrder: dateOrder, DelegationModes: delegationModes,
 		Links: conf.links, LinkSystems: conf.linkSystems,
-		Hostname: detectedHostname, HostContext: hostContext,
+		DocLinkPatterns: links.ParseDocPatterns(conf.strings["doc_link_patterns"]),
+		Hostname:        detectedHostname, HostContext: hostContext,
 		HostContextSource: hostContextSource, HostContexts: conf.hostContexts,
 		PromptFacts: ResolvePromptFacts(conf.promptFacts),
 		Warnings:    warnings,
@@ -195,9 +200,10 @@ func ForDir(dir string, env determinism.Env) Paths {
 		TimezoneFallbackWarning: false, DateOrder: DefaultDateOrder,
 		DelegationModes: record.BuiltinModes().Modes(),
 		Links:           map[string]string{}, LinkSystems: map[string]string{},
-		HostContexts: map[string]string{},
-		PromptFacts:  ResolvePromptFacts(nil),
-		Warnings:     []string{},
+		DocLinkPatterns: []string{},
+		HostContexts:    map[string]string{},
+		PromptFacts:     ResolvePromptFacts(nil),
+		Warnings:        []string{},
 		Sources: map[string]string{
 			"org": "pinned", "archive": "pinned", "memory": "pinned",
 			"urgent_days": "default", "max_depth": "default", "theme": "default",
@@ -593,6 +599,8 @@ func (c parsedConfig) assign(key, value string, env determinism.Env) {
 	case key == "delegation_modes":
 		// Stored raw: pickDelegationModes owns the validation, so a malformed
 		// list can WARN about itself instead of disappearing here.
+		c.strings[key] = value
+	case key == "doc_link_patterns":
 		c.strings[key] = value
 	case key == "date_order":
 		if orderValues[strings.ToLower(value)] {

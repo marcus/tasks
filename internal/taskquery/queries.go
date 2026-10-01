@@ -65,6 +65,7 @@ type Queries struct {
 	// point at" without a second configuration path.
 	linkShorthands map[string]string
 	linkSystems    map[string]string
+	docPatterns    []string
 
 	// urgentDays is the deadline window QuadrantFor classifies against. It rides
 	// on the read model for the same reason the link configuration does: a
@@ -83,6 +84,12 @@ type Queries struct {
 	projectsRootRecord record.Record
 	projectsRootFound  bool
 	projectsRootReady  bool
+}
+
+// WithDocLinkPatterns supplies the configured `doc_link_patterns`: URL shapes
+// classified as the `doc` system ahead of any host row.
+func WithDocLinkPatterns(patterns []string) Option {
+	return func(q *Queries) { q.docPatterns = patterns }
 }
 
 // Option configures a read model at construction. The variadic form is
@@ -167,6 +174,9 @@ func (q *Queries) Links(item store.Item) []links.Link {
 	result := make([]links.Link, 0, len(item.FormalLinks))
 	byURL := map[string]int{}
 	appendLink := func(link links.Link) {
+		if links.MatchesDocPattern(link.URL, q.docPatterns) {
+			link.System = links.SystemDoc
+		}
 		if index, present := byURL[link.URL]; present {
 			if result[index].Label == nil && link.Label != nil {
 				result[index].Label = link.Label
@@ -194,6 +204,19 @@ func (q *Queries) Links(item store.Item) []links.Link {
 		appendLink(extracted)
 	}
 	return result
+}
+
+// CarriesLink reports whether any of the task's links (formal, title, or body)
+// is the same link as `raw` under links.MatchKey. It is the one definition of
+// "this task already carries that URL" the CLI and the API filter on.
+func (q *Queries) CarriesLink(item store.Item, raw string) bool {
+	want := links.MatchKey(raw)
+	for _, link := range q.Links(item) {
+		if links.MatchKey(link.URL) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Context is the reader this model answers for.

@@ -78,6 +78,9 @@ type Options struct {
 	// publish the resolved configuration; classification itself is the read
 	// model's, configured through QueryOptions.
 	LinkSystems map[string]string
+	// DocLinkPatterns are the configured `doc_link_patterns`, carried for the
+	// same reason as LinkSystems.
+	DocLinkPatterns []string
 }
 
 var hostContextPattern = regexp.MustCompile(`^@\S+$`)
@@ -92,6 +95,7 @@ type Application struct {
 	queryOptions        []taskquery.Option
 	linkShorthands      map[string]string
 	linkSystems         map[string]string
+	docLinkPatterns     []string
 }
 
 // New validates the options and builds an application.
@@ -110,6 +114,7 @@ func New(options Options) (*Application, error) {
 		queryOptions:        append([]taskquery.Option{}, options.QueryOptions...),
 		linkShorthands:      copyMap(options.LinkShorthands),
 		linkSystems:         copyMap(options.LinkSystems),
+		docLinkPatterns:     append([]string{}, options.DocLinkPatterns...),
 	}, nil
 }
 
@@ -130,6 +135,9 @@ func (a *Application) LinkShorthands() map[string]string { return copyMap(a.link
 
 // LinkSystems is a copy of the configured `system.<name>` host rows.
 func (a *Application) LinkSystems() map[string]string { return copyMap(a.linkSystems) }
+
+// DocLinkPatterns is a copy of the configured `doc_link_patterns`.
+func (a *Application) DocLinkPatterns() []string { return append([]string{}, a.docLinkPatterns...) }
 
 // ExpandFormalLink resolves one formal-link input — a web URL, or a configured
 // shorthand such as `jira:OPS-1234` — into the link a write stores. A

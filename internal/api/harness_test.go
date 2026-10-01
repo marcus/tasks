@@ -79,6 +79,7 @@ type harness struct {
 	// built with newHarnessConfigured publishes and parses with.
 	linkShorthands map[string]string
 	linkSystems    map[string]string
+	docPatterns    []string
 	dateOrder      string
 }
 
@@ -191,6 +192,7 @@ func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bo
 		HostContext:     hostContext,
 		LinkShorthands:  h.linkShorthands,
 		LinkSystems:     h.linkSystems,
+		DocLinkPatterns: h.docPatterns,
 	})
 	if err != nil {
 		t.Fatalf("application: %v", err)
@@ -198,10 +200,10 @@ func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bo
 	var requestCount atomic.Int64
 	server, err := New(Options{
 		App:             app,
-		Read:            NewStoreReader(newStore, context),
+		Read:            NewStoreReader(newStore, context, h.queryOptions()...),
 		Changesets:      func() Changesets { return newStore() },
 		TemporalContext: context,
-		QueryOptions:    []taskquery.Option{},
+		QueryOptions:    h.queryOptions(),
 		Port:            4747,
 		MaxDepth:        4,
 		Timezone:        "Etc/UTC",
@@ -220,6 +222,15 @@ func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bo
 	}
 	h.server = server
 	return h
+}
+
+// queryOptions is the link configuration a production server hands both its
+// reader and its write responses.
+func (h *harness) queryOptions() []taskquery.Option {
+	return []taskquery.Option{
+		taskquery.WithLinkConfig(h.linkShorthands, h.linkSystems),
+		taskquery.WithDocLinkPatterns(h.docPatterns),
+	}
 }
 
 // answer is one response, decoded enough for a test to assert on.

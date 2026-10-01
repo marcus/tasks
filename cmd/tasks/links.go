@@ -20,10 +20,12 @@ type linkEntry struct {
 
 // linksCommand lists the links found in task titles and bodies, classified by
 // system (slack, jira, github, …). With a ref it lists one task's; otherwise
-// every open task's. `--system` filters, `--all` widens to done and archived.
+// every open task's. `--system` filters, `--all` widens to done and archived,
+// and `--url` keeps only the tasks that carry that link (links.MatchKey, the
+// same match `GET /api/v1/tasks?link=` applies).
 func (s *surfaceContext) linksCommand(args []string) int {
 	asJSON, all := false, false
-	system := ""
+	system, wantURL := "", ""
 	rest := []string{}
 	for index := 0; index < len(args); index++ {
 		switch argument := args[index]; argument {
@@ -37,9 +39,14 @@ func (s *surfaceContext) linksCommand(args []string) int {
 				return status
 			}
 			system, index = value, consumed
+		case "--url", "-u":
+			if index+1 >= len(args) || strings.TrimSpace(args[index+1]) == "" {
+				return abort("--url needs a value")
+			}
+			wantURL, index = strings.TrimSpace(args[index+1]), index+1
 		default:
 			if strings.HasPrefix(argument, "-") {
-				return abort("unknown flag: " + argument + " (links accepts: --json, --all, --system)")
+				return abort("unknown flag: " + argument + " (links accepts: --json, --all, --system, --url)")
 			}
 			rest = append(rest, argument)
 		}
@@ -72,6 +79,9 @@ func (s *surfaceContext) linksCommand(args []string) int {
 
 	kept := []linkEntry{}
 	for _, entry := range entries {
+		if wantURL != "" && !queries.CarriesLink(entry.item, wantURL) {
+			continue
+		}
 		selected := entry.links
 		if system != "" {
 			selected = []links.Link{}

@@ -262,7 +262,10 @@ the human-readable tour of that contract.
 - Links in titles and notes too: bare URLs, `[[url][label]]`, and
   configured shorthands (`jira:OPS-1234`).
 - `tasks links` lists the union, classified by system. `--system`,
-  `--all`, `--json`.
+  `--all`, `--json`, and `--url` to find the tasks carrying one link.
+- Links matching `doc_link_patterns` (a local note server's URLs, say)
+  are the `doc` system. Stored and extracted links are web URLs, so that
+  is how a document link reaches a task today.
 - `tasks open <ref>` launches one, or lists them numbered. `--print`
   if you only wanted the URL. `TASKS_OPENER` overrides the browser.
 - `link.<name>` URL templates and `system.<name>` custom hosts in

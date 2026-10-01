@@ -49,6 +49,8 @@ func (s *surfaceContext) configJSON() string {
 	writeStringMap(w, paths.Links)
 	w.Key("link_systems")
 	writeStringMap(w, paths.LinkSystems)
+	w.Key("doc_link_patterns")
+	w.Strings(paths.DocLinkPatterns)
 	w.Key("prompt_facts")
 	writeBoolMap(w, paths.PromptFacts)
 	w.KeyStrOrNull("hostname", paths.Hostname)
@@ -124,6 +126,9 @@ func (s *surfaceContext) configHuman() {
 	}
 	for _, name := range sortedKeys(paths.LinkSystems) {
 		out(fmt.Sprintf("system.%s: %s", name, paths.LinkSystems[name]))
+	}
+	if len(paths.DocLinkPatterns) > 0 {
+		out("doc_link_patterns: " + strings.Join(paths.DocLinkPatterns, " "))
 	}
 	for _, name := range sortedKeys(paths.PromptFacts) {
 		state := "off"

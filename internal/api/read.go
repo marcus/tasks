@@ -25,7 +25,7 @@ import (
 // listQueryKeys is App::LIST_QUERY_KEYS.
 var listQueryKeys = []string{
 	"scope", "state", "context", "tag", "priority", "text", "body",
-	"deferred", "available", "recurring", "delegated",
+	"deferred", "available", "recurring", "delegated", "link",
 }
 
 // delegationScopes are the two open-live refinements `scope` accepts on top of
@@ -151,6 +151,8 @@ func (s *Server) metaDocument() []byte {
 	writeStringMap(w, s.options.App.LinkShorthands())
 	w.Key("link_systems")
 	writeStringMap(w, s.options.App.LinkSystems())
+	w.Key("doc_link_patterns")
+	w.Strings(s.options.App.DocLinkPatterns())
 	w.Key("capabilities")
 	w.BeginObject()
 	// Capabilities advertise what THIS server routes, and every flag here is
@@ -170,6 +172,7 @@ func (s *Server) metaDocument() []byte {
 var metaCapabilities = []string{
 	"projects", "undo", "redo", "archive_sweep", "events", "views",
 	"activate", "patch_deltas", "date_parse", "lead_explain", "outline",
+	"link_filter", "archive_fallback",
 }
 
 // metaDigest is the short digest of the /meta document and the build that
@@ -231,17 +234,28 @@ func (s *Server) listTasks(request *http.Request) (response, error) {
 	if err != nil {
 		return response{}, err
 	}
+	link := ""
+	if params.Has("link") {
+		link = strings.TrimSpace(params.Get("link"))
+		if link == "" {
+			return response{}, validationError(reason("link", "must name a URL"))
+		}
+	}
 	read, readErr := s.options.Read()
 	if readErr != nil || !read.OK() {
 		return response{}, readFailure(read, readErr)
 	}
 	items := read.Queries.List(filter)
-	if wantAvailable != nil && *wantAvailable {
+	if (wantAvailable != nil && *wantAvailable) || link != "" {
 		kept := []store.Item{}
 		for _, item := range items {
-			if read.Queries.AvailabilityFor(item).Available() {
-				kept = append(kept, item)
+			if wantAvailable != nil && *wantAvailable && !read.Queries.AvailabilityFor(item).Available() {
+				continue
 			}
+			if link != "" && !read.Queries.CarriesLink(item, link) {
+				continue
+			}
+			kept = append(kept, item)
 		}
 		items = kept
 	}
@@ -411,7 +425,8 @@ func (s *Server) getTask(request *http.Request, id string) (response, error) {
 		return response{}, err
 	}
 	source := "live"
-	if params.Has("source") {
+	explicit := params.Has("source")
+	if explicit {
 		source = params.Get("source")
 	}
 	if source != "live" && source != "archive" {
@@ -422,6 +437,13 @@ func (s *Server) getTask(request *http.Request, id string) (response, error) {
 		return response{}, readFailure(read, readErr)
 	}
 	item, found := findInSource(read.Queries, id, store.Source(source))
+	// Without an explicit source the id is resolved wherever it lives: live
+	// first, because that is the resource a write would address, then the
+	// archive, so a client holding a cited id never has to page the archived
+	// scope to find one task. An explicit source stays exact.
+	if !found && !explicit {
+		item, found = findInSource(read.Queries, id, store.SourceArchive)
+	}
 	if !found {
 		return response{}, errorOf(404, "not_found")
 	}

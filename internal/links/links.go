@@ -218,14 +218,20 @@ func Extract(lines []string, shorthands, customSystems map[string]string) []Link
 	return result
 }
 
-// Classify names the system a URL points into: a custom `systems` row (host
+// Classify names the system a URL points into: "doc" for a `file:` URL or a
+// relative path to a markdown or text file, then a custom `systems` row (host
 // suffix; user intent wins), then a built-in row on host — and path, when the
 // row has one — else the bare host itself, so unknown systems still group and
-// list meaningfully, else "link" for something unparseable.
+// list meaningfully, else "link" for something unparseable. Configured
+// `doc_link_patterns` are applied over this by the read model
+// (taskquery.Queries.Links), which owns that configuration.
 func Classify(raw string, customSystems map[string]string) string {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return "link"
+	}
+	if isBuiltinDoc(parsed) {
+		return SystemDoc
 	}
 	host := parsed.Hostname()
 	if host == "" {

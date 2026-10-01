@@ -741,3 +741,53 @@ func TestReservedGTDListsAreAddressableButUnlisted(t *testing.T) {
 		t.Errorf("Inbox resolved as a project:\n%s", result.stdout)
 	}
 }
+
+// `links --url` keeps the tasks carrying one link under links.MatchKey, the
+// same match GET /api/v1/tasks?link= applies (issue #37).
+func TestLinksURLFiltersByNormalizedLink(t *testing.T) {
+	dir := seedStore(t, nestedFixture)
+	result := runCLI(t, dir, "links", "--url", "https://acme.slack.com/archives/C042/p171/?thread_ts=1&cid=C042#x", "--json")
+	if result.status != 0 {
+		t.Fatalf("exit %d stderr %q", result.status, result.stderr)
+	}
+	var document struct {
+		Links []struct {
+			ID string `json:"id"`
+		} `json:"links"`
+	}
+	if err := json.Unmarshal([]byte(result.stdout), &document); err != nil {
+		t.Fatalf("json: %v\n%s", err, result.stdout)
+	}
+	if len(document.Links) == 0 {
+		t.Fatalf("no links for the thread:\n%s", result.stdout)
+	}
+	for _, link := range document.Links {
+		if link.ID != "aaaa1111" {
+			t.Fatalf("--url kept another task: %s", result.stdout)
+		}
+	}
+	if none := runCLI(t, dir, "links", "--url", "https://example.com/none"); !strings.Contains(none.stdout, "No links found.") {
+		t.Fatalf("stdout = %q", none.stdout)
+	}
+	if bad := runCLI(t, dir, "links", "--url"); bad.status == 0 || !strings.Contains(bad.stderr, "--url needs a value") {
+		t.Fatalf("exit %d stderr %q", bad.status, bad.stderr)
+	}
+}
+
+// doc_link_patterns classify a configured URL shape as the doc system (issue #38).
+func TestDocLinkPatternsClassifyLinksAsDoc(t *testing.T) {
+	fixture := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Work"}
+{"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"NEXT","title":"From the review","links":[{"url":"http://127.0.0.1:8080/open?p=/home/user/notes/review.md"}]}
+`
+	dir := seedStore(t, fixture)
+	seedConfig(t, dir, "doc_link_patterns = http://127.0.0.1:8080/open?p=*\n")
+	result := runCLI(t, dir, "links", "--system", "doc")
+	if !strings.Contains(result.stdout, "doc http://127.0.0.1:8080/open?p=/home/user/notes/review.md") {
+		t.Fatalf("stdout =\n%s", result.stdout)
+	}
+	config := runCLI(t, dir, "config", "--json")
+	if !strings.Contains(config.stdout, `"doc_link_patterns":["http://127.0.0.1:8080/open?p=*"]`) {
+		t.Fatalf("config --json =\n%s", config.stdout)
+	}
+}

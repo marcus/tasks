@@ -173,6 +173,7 @@ func buildServer(paths config.Paths, env determinism.Env, port int) (*api.Server
 	}
 	queryOptions := []taskquery.Option{
 		taskquery.WithLinkConfig(paths.Links, paths.LinkSystems),
+		taskquery.WithDocLinkPatterns(paths.DocLinkPatterns),
 		taskquery.WithUrgentDays(paths.UrgentDays),
 	}
 
@@ -183,6 +184,7 @@ func buildServer(paths config.Paths, env determinism.Env, port int) (*api.Server
 		QueryOptions:    queryOptions,
 		LinkShorthands:  paths.Links,
 		LinkSystems:     paths.LinkSystems,
+		DocLinkPatterns: paths.DocLinkPatterns,
 	})
 	if err != nil {
 		return nil, err

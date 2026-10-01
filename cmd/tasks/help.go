@@ -85,6 +85,7 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"  links     urls [<ref>]   links in task notes, by system (slack, jira, …)" + "\n" +
 	"                           --system <name> filters · --all widens the listing" + "\n" +
 	"                           to done + archived (<ref> stays live-file) · --json" + "\n" +
+	"                           --url <url> only tasks carrying that link" + "\n" +
 	"  open      o <ref> [n]    open a task's link in the browser (n or --system" + "\n" +
 	"                           picks among several; --print shows instead;" + "\n" +
 	"                           --json reports the link it acted on)" + "\n" +

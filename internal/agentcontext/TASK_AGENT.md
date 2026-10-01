@@ -56,7 +56,8 @@ another `tasks` process holds the file — retry, and do not treat the leftover
   Formal links and links in notes (Slack, Jira, PRs, docs) are first-class.
   Notes recognize `[[url][label]]`, bare URLs, or configured shorthands like
   `jira:OPS-1234`. `tasks links` lists the combined set by
-  system and `list --body /text` searches note text.
+  system, `tasks links --url <url> --all` finds the tasks that already carry
+  a link, and `list --body /text` searches note text.
 - `archive.jsonl` — completed/cancelled history (swept by `tasks archive`).
 - The files may live outside the CLI's repo. Absolute paths for this run
   (the CLI and both files) are appended below this prompt under

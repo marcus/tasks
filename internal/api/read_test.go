@@ -117,13 +117,16 @@ func TestAdvertisedCapabilitiesAreReallyRouted(t *testing.T) {
 	assertStatus(t, activated, 200)
 	delta := h.json("PATCH", "/api/v1/tasks/"+fixFlight, `{"add_tags":["probe"]}`, h.withIfMatch("*"))
 	assertStatus(t, delta, 200)
+	// The link filter and the archive fallback are proven by answering.
+	assertStatus(t, h.get("/api/v1/tasks?link=https://example.com/"), 200)
+	assertStatus(t, h.get("/api/v1/tasks/dddd0001"), 200)
 
 	// Every flag the server publishes is one this test proves routed above; a
 	// new flag without a probe here fails rather than passing unexamined.
 	proven := map[string]bool{
 		"undo": true, "redo": true, "archive_sweep": true, "events": true, "projects": true,
 		"views": true, "outline": true, "date_parse": true, "lead_explain": true,
-		"activate": true, "patch_deltas": true,
+		"activate": true, "patch_deltas": true, "link_filter": true, "archive_fallback": true,
 	}
 	for capability, value := range capabilities {
 		if value == true && !proven[capability] {
@@ -321,6 +324,15 @@ func TestTaskRepresentationAndSourceExactLookup(t *testing.T) {
 	if archivedTask["project"] != "Archive" {
 		t.Errorf("archived project = %v", archivedTask["project"])
 	}
+
+	// An archive-only id resolves without naming its source (issue #36); an
+	// explicit source stays exact.
+	fallback := h.get("/api/v1/tasks/dddd0001")
+	assertStatus(t, fallback, 200)
+	if fallback.data()["source"] != "archive" || fallback.data()["title"] != "Archived anchor" {
+		t.Errorf("archive fallback = %v / %v", fallback.data()["source"], fallback.data()["title"])
+	}
+	assertError(t, h.get("/api/v1/tasks/dddd0001?source=live"), 404, "not_found")
 
 	assertError(t, h.get("/api/v1/tasks/deadbeef"), 404, "not_found")
 	assertError(t, h.get("/api/v1/tasks/NOT-AN-ID"), 400, "malformed_request")
